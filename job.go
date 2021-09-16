@@ -183,12 +183,12 @@ func ResetJob(ctx context.Context, jobID uu.ID) error {
 var ResetJobsArgs struct {
 	command.ArgsDef
 
-	JobID uu.IDs `arg:"jobIDs"`
+	JobID uu.IDSlice `arg:"jobIDs"`
 }
 
 // ResetJobs resets the processing state of multiple jobs in the queue
 // so that they are ready to be re-processed.
-func ResetJobs(ctx context.Context, jobIDs uu.IDs) error {
+func ResetJobs(ctx context.Context, jobIDs uu.IDSlice) error {
 	return service.ResetJobs(ctx, jobIDs)
 }
 
