@@ -463,6 +463,27 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 	)
 }
 
+func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) {
+	defer errs.WrapWithFuncParams(&err, ctx, jobIDs)
+
+	if j.closed {
+		return jobqueue.ErrClosed
+	}
+
+	return db.Conn(ctx).Exec(
+		`update worker.job
+			set
+				started_at=null,
+				stopped_at=null,
+				error_msg=null,
+				error_data=null,
+				result=null,
+				updated_at=now()
+			where id = any($1)`,
+		jobIDs,
+	)
+}
+
 // func (j *jobworkerDB) SetJobIssue(jobID uu.ID, issueType string, issueData nullable.JSON) (err error) {
 // 	deerrs.WrapWithFuncParamsrror(&err, jobID, issueType, issueData)
 

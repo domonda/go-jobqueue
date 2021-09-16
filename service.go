@@ -38,6 +38,10 @@ type Service interface {
 	// so that the job is ready to be re-processed.
 	ResetJob(ctx context.Context, jobID uu.ID) error
 
+	// ResetJobs resets the processing state of multiple jobs in the queue
+	// so that they are ready to be re-processed.
+	ResetJobs(ctx context.Context, jobIDs uu.IDs) error
+
 	AddJobBundle(ctx context.Context, jobBundle *JobBundle) error
 	GetJobBundle(ctx context.Context, jobBundleID uu.ID) (*JobBundle, error)
 	DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) error

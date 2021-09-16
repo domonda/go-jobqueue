@@ -152,19 +152,19 @@ func NewJob(jobType, origin string, payload interface{}) (*Job, error) {
 	return NewJobWithPriority(jobType, origin, payload, 0)
 }
 
-func NewJobReflectType(origin string, payload interface{}) (job *Job, err error) {
+func NewJobReflectType(origin string, payload interface{}) (*Job, error) {
 	return NewJob(ReflectJobTypeOfPayload(payload), origin, payload)
 }
 
-func Add(ctx context.Context, job *Job) (err error) {
+func Add(ctx context.Context, job *Job) error {
 	return service.AddJob(ctx, job)
 }
 
-func GetJob(ctx context.Context, jobID uu.ID) (job *Job, err error) {
+func GetJob(ctx context.Context, jobID uu.ID) (*Job, error) {
 	return service.GetJob(ctx, jobID)
 }
 
-func DeleteFinishedJobs(ctx context.Context) (err error) {
+func DeleteFinishedJobs(ctx context.Context) error {
 	return service.DeleteFinishedJobs(ctx)
 }
 
@@ -176,8 +176,20 @@ var ResetJobArgs struct {
 
 // ResetJob resets the processing state of a job in the queue
 // so that the job is ready to be re-processed.
-func ResetJob(ctx context.Context, jobID uu.ID) (err error) {
+func ResetJob(ctx context.Context, jobID uu.ID) error {
 	return service.ResetJob(ctx, jobID)
+}
+
+var ResetJobsArgs struct {
+	command.ArgsDef
+
+	JobID uu.IDs `arg:"jobIDs"`
+}
+
+// ResetJobs resets the processing state of multiple jobs in the queue
+// so that they are ready to be re-processed.
+func ResetJobs(ctx context.Context, jobIDs uu.IDs) error {
+	return service.ResetJobs(ctx, jobIDs)
 }
 
 var DeleteJobArgs struct {
@@ -187,6 +199,6 @@ var DeleteJobArgs struct {
 }
 
 // DeleteJob deletes a job from the queue.
-func DeleteJob(ctx context.Context, jobID uu.ID) (err error) {
+func DeleteJob(ctx context.Context, jobID uu.ID) error {
 	return service.DeleteJob(ctx, jobID)
 }
