@@ -30,7 +30,9 @@ func dispatchJob(ctx context.Context, job *jobqueue.Job) (err error) {
 
 	result, err := doJobWithWorker(ctx, worker, job)
 	if err != nil {
-		log.Error("Job worker returned an error").Err(err).Log()
+		log.Errorf("Job error: %s", errs.Root(err)).
+			Err(err).
+			Log()
 
 		e := db.SetJobError(ctx, job.ID, err.Error(), nil)
 		if e != nil {
