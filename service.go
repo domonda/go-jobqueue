@@ -59,7 +59,7 @@ type Status struct {
 	// NumWorkerThreads int
 }
 
-// IsZero returns true if the reciver is nil
+// IsZero returns true if the receiver is nil
 // or dereferenced equal to its zero value.
 // Valid to call on a nil receiver.
 func (s *Status) IsZero() bool {
