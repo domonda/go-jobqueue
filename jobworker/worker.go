@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/ungerik/go-command"
-
 	"github.com/domonda/go-errs"
 	"github.com/domonda/go-jobqueue"
 	"github.com/domonda/go-types"
@@ -159,25 +157,25 @@ func registerFunc(jobType string, workerFunc interface{}) {
 	}))
 }
 
-// RegisterCommand registers a command as worker for a jobType.
-// The value of every top level key in the JSON job payload will be
-// assigned to the argument with the key name.
-// The job queue only handles errors returned from worker functions.
-// If the command returns something else in addition to an error,
-// then resultsHandlers will be called as opportunity to handle
-// those results and not loose them.
-func RegisterCommand(jobType string, commandFunc interface{}, args command.Args, resultsHandlers ...command.ResultsHandler) {
-	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobType)
+// // RegisterCommand registers a command.Function as worker for a jobType.
+// // The value of every top level key in the JSON job payload will be
+// // assigned to the argument with the key name.
+// // The job queue only handles errors returned from worker functions.
+// // If the command.Function returns something else in addition to an error,
+// // then resultsHandlers will be called as opportunity to handle
+// // those results and not loose them.
+// func RegisterCommand(jobType string, commandFunc command.Function, resultsHandlers ...command.ResultsHandler) {
+// 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobType)
 
-	f, err := command.GetJSONArgsFunc(commandFunc, args, resultsHandlers...)
-	if err != nil {
-		panic(err)
-	}
+// 	f, err := command.NewJSONArgsFunc(commandFunc, resultsHandlers...)
+// 	if err != nil {
+// 		panic(err)
+// 	}
 
-	Register(jobType, WorkerFunc(func(ctx context.Context, job *jobqueue.Job) (result interface{}, err error) {
-		return nil, f(ctx, job.Payload)
-	}))
-}
+// 	Register(jobType, WorkerFunc(func(ctx context.Context, job *jobqueue.Job) (result interface{}, err error) {
+// 		return nil, f(ctx, job.Payload)
+// 	}))
+// }
 
 func Unregister(jobTypes ...string) {
 	workersMtx.Lock()

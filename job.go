@@ -10,7 +10,6 @@ import (
 	"github.com/domonda/go-types/notnull"
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
-	"github.com/ungerik/go-command"
 )
 
 type Job struct {
@@ -168,34 +167,16 @@ func DeleteFinishedJobs(ctx context.Context) error {
 	return service.DeleteFinishedJobs(ctx)
 }
 
-var ResetJobArgs struct {
-	command.ArgsDef
-
-	JobID uu.ID `arg:"jobID"`
-}
-
 // ResetJob resets the processing state of a job in the queue
 // so that the job is ready to be re-processed.
 func ResetJob(ctx context.Context, jobID uu.ID) error {
 	return service.ResetJob(ctx, jobID)
 }
 
-var ResetJobsArgs struct {
-	command.ArgsDef
-
-	JobID uu.IDSlice `arg:"jobIDs"`
-}
-
 // ResetJobs resets the processing state of multiple jobs in the queue
 // so that they are ready to be re-processed.
 func ResetJobs(ctx context.Context, jobIDs uu.IDSlice) error {
 	return service.ResetJobs(ctx, jobIDs)
-}
-
-var DeleteJobArgs struct {
-	command.ArgsDef
-
-	JobID uu.ID `arg:"jobID"`
 }
 
 // DeleteJob deletes a job from the queue.
