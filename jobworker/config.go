@@ -1,6 +1,7 @@
 package jobworker
 
 import (
+	"context"
 	"reflect"
 
 	rootlog "github.com/domonda/golog/log"
@@ -13,5 +14,6 @@ var (
 	// would also be logged.
 	OnError = func(error) {}
 
-	typeOfError = reflect.TypeOf((*error)(nil)).Elem()
+	typeOfError   = reflect.TypeOf((*error)(nil)).Elem()
+	typeOfContext = reflect.TypeOf((*context.Context)(nil)).Elem()
 )

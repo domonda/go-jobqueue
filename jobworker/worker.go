@@ -87,11 +87,23 @@ func registerFunc(jobType string, workerFunc interface{}) {
 		panic(fmt.Errorf("workerFunc is not a function but %T", workerFunc))
 	}
 
+	hasCtx := workerFuncType.NumIn() >= 1 && workerFuncType.In(0) == typeOfContext
+
 	// Check argument
-	if workerFuncType.NumIn() != 1 {
-		panic(fmt.Errorf("workerFunc must have 1 argument, but has %d", workerFuncType.NumIn()))
+	if hasCtx {
+		if workerFuncType.NumIn() != 2 {
+			panic(fmt.Errorf("workerFunc must have 1 argument after context, but has %d", workerFuncType.NumIn()-1))
+		}
+	} else {
+		if workerFuncType.NumIn() != 1 {
+			panic(fmt.Errorf("workerFunc must have 1 argument, but has %d", workerFuncType.NumIn()))
+		}
 	}
+
 	argType := workerFuncType.In(0)
+	if hasCtx {
+		argType = workerFuncType.In(1)
+	}
 	if !types.CanMarshalJSON(argType) {
 		panic(fmt.Errorf("workerFunc must have an argument type that can be marshalled to JSON, but has %s", argType))
 	}
@@ -128,20 +140,21 @@ func registerFunc(jobType string, workerFunc interface{}) {
 	}
 
 	Register(jobType, WorkerFunc(func(ctx context.Context, job *jobqueue.Job) (result interface{}, err error) {
-		var payloadVal reflect.Value
-		switch payloadType.Kind() {
-		case reflect.Struct, reflect.Slice:
-			payloadVal = reflect.New(payloadType)
-		case reflect.Map:
-			payloadVal = reflect.MakeMap(payloadType)
-		default:
-			panic("unsupported payload type")
-		}
+		payloadVal := reflect.New(payloadType) // JSON unmarshalling always needs a pointer
 		err = job.Payload.UnmarshalTo(payloadVal.Interface())
 		if err != nil {
 			return nil, fmt.Errorf("Error while unmarshalling job payload '%s': %w", job.Payload, err)
 		}
-		results := workerFuncVal.Call([]reflect.Value{payloadVal})
+		if argType.Kind() != reflect.Ptr {
+			payloadVal = payloadVal.Elem()
+		}
+		var params []reflect.Value
+		if hasCtx {
+			params = []reflect.Value{reflect.ValueOf(ctx), payloadVal}
+		} else {
+			params = []reflect.Value{payloadVal}
+		}
+		results := workerFuncVal.Call(params)
 		switch len(results) {
 		case 0:
 			return nil, nil
@@ -152,8 +165,9 @@ func registerFunc(jobType string, workerFunc interface{}) {
 			return results[0].Interface(), nil
 		case 2:
 			return results[0].Interface(), errs.AsError(results[1].Interface())
+		default:
+			panic("unsupported number of results")
 		}
-		panic("unsupported number of results")
 	}))
 }
 
