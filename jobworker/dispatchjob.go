@@ -2,6 +2,7 @@ package jobworker
 
 import (
 	"context"
+	"strings"
 
 	"github.com/domonda/go-errs"
 	"github.com/domonda/go-jobqueue"
@@ -30,14 +31,18 @@ func dispatchJob(ctx context.Context, job *jobqueue.Job) (err error) {
 
 	result, err := doJobWithWorker(ctx, worker, job)
 	if err != nil {
-		log.Errorf("Job error: %s", errs.Root(err)).
+		errHeadline := errs.Root(err).Error()
+		if nl := strings.IndexByte(errHeadline, '\n'); nl > 0 {
+			// Only use first line of error message as errHeadline
+			errHeadline = errHeadline[:nl]
+		}
+		log.Errorf("Job error: %s", errHeadline).
 			Err(err).
 			Log()
 
 		e := db.SetJobError(ctx, job.ID, err.Error(), nil)
 		if e != nil {
 			log.Error("Error while updating job error in the database").Err(e).Log()
-
 			OnError(e)
 			return e
 		}
