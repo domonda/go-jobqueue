@@ -2,7 +2,6 @@ package jobworker
 
 import (
 	"context"
-	"runtime/debug"
 	"strings"
 
 	"github.com/domonda/go-errs"
@@ -62,7 +61,7 @@ func dispatchJob(ctx context.Context, job *jobqueue.Job) (err error) {
 func doJobWithWorker(ctx context.Context, worker Worker, job *jobqueue.Job) (result interface{}, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = errs.Errorf("job worker panic: %w\n%s", errs.AsError(r), debug.Stack())
+			err = errs.Errorf("job worker panic: %w", errs.AsErrorWithDebugStack(r))
 		}
 	}()
 
