@@ -13,15 +13,15 @@ import (
 )
 
 type Job struct {
-	ID       uu.ID         `db:"id,pk"     json:"id"`
+	ID       uu.ID         `db:"id"        json:"id"`
 	BundleID uu.NullableID `db:"bundle_id" json:"bundleId"`
 
-	Type     string       `db:"type"     json:"type"` // CHECK(length("type") > 0 AND length("type") <= 100)
-	Payload  notnull.JSON `db:"payload"  json:"payload"`
-	Priority int64        `db:"priority" json:"priority"`
-	Origin   string       `db:"origin"   json:"origin"` // CHECK(length(origin) > 0 AND length(origin) <= 100)
+	Type     string        `db:"type"     json:"type"` // CHECK(length("type") > 0 AND length("type") <= 100)
+	Payload  notnull.JSON  `db:"payload"  json:"payload"`
+	Priority int64         `db:"priority" json:"priority"`
+	Origin   string        `db:"origin"   json:"origin"`  // CHECK(length(origin) > 0 AND length(origin) <= 100)
+	StartAt  nullable.Time `db:"start_at" json:"startAt"` // If not NULL, earliest time to start the job
 
-	StartAt   nullable.Time `db:"start_at"   json:"startAt"`   // If not NULL, earliest time to start the job
 	StartedAt nullable.Time `db:"started_at" json:"startedAt"` // Time when started working on the job, or NULL when not started
 	StoppedAt nullable.Time `db:"stopped_at" json:"stoppedAt"` // Time when working on job was stoped because of a decision question or an error, or NULL
 
@@ -75,7 +75,8 @@ func (j *Job) String() string {
 
 // NewJobWithPriority creates a Job but does not add it to the queue.
 // The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
-func NewJobWithPriority(jobType, origin string, payload interface{}, priority int64) (*Job, error) {
+// If startAt is not null then the job will not start before that time.
+func NewJobWithPriority(jobType, origin string, payload any, priority int64, startAt nullable.Time) (*Job, error) {
 	if jobType == "" {
 		return nil, errors.New("empty jobType")
 	}
@@ -138,6 +139,7 @@ func NewJobWithPriority(jobType, origin string, payload interface{}, priority in
 		Payload:   payloadJSON,
 		Origin:    origin,
 		Priority:  priority,
+		StartAt:   startAt,
 		UpdatedAt: now,
 		CreatedAt: now,
 	}
@@ -147,12 +149,13 @@ func NewJobWithPriority(jobType, origin string, payload interface{}, priority in
 
 // NewJob creates a Job but does not add it to the queue.
 // The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
-func NewJob(jobType, origin string, payload interface{}) (*Job, error) {
-	return NewJobWithPriority(jobType, origin, payload, 0)
+// If startAt is not null then the job will not start before that time.
+func NewJob(jobType, origin string, payload any, startAt nullable.Time) (*Job, error) {
+	return NewJobWithPriority(jobType, origin, payload, 0, startAt)
 }
 
-func NewJobReflectType(origin string, payload interface{}) (*Job, error) {
-	return NewJob(ReflectJobTypeOfPayload(payload), origin, payload)
+func NewJobReflectType(origin string, payload any, startAt nullable.Time) (*Job, error) {
+	return NewJob(ReflectJobTypeOfPayload(payload), origin, payload, startAt)
 }
 
 func Add(ctx context.Context, job *Job) error {

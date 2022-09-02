@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
 )
 
@@ -51,7 +52,8 @@ func (b *JobBundle) String() string {
 // NewJobBundle xxxx TODO adds a job bundle of jobBundleType from jobBundleOrigin.
 // A job will be added for every JobDesc.
 // If a JobDesc.Type is an empty string, then ReflectJobType(JobDesc.Payload) will be used instead.
-func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDesc) (*JobBundle, error) {
+// If startAt is not null then the job bundle will not start before that time.
+func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDesc, startAt nullable.Time) (*JobBundle, error) {
 	if len(jobDescriptions) == 0 {
 		return nil, errors.New("no jobDescriptions")
 	}
@@ -63,7 +65,7 @@ func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDe
 		if jobType == "" {
 			jobType = ReflectJobTypeOfPayload(desc.Payload)
 		}
-		job, err := NewJobWithPriority(jobType, desc.Origin, desc.Payload, desc.Priority)
+		job, err := NewJobWithPriority(jobType, desc.Origin, desc.Payload, desc.Priority, startAt)
 		if err != nil {
 			return nil, err
 		}

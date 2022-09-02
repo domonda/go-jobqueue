@@ -76,7 +76,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 		listeners := j.serviceListeners
 		j.listenersMtx.Unlock()
 
-		ctx := context.TODO()
+		ctx := context.Background() // Don't use ctx of enclosing listen method
 
 		for _, l := range listeners {
 			l.OnJobStopped(ctx, job.ID, job.Type, job.Origin)
@@ -106,7 +106,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 		listeners := j.serviceListeners
 		j.listenersMtx.Unlock()
 
-		ctx := context.TODO()
+		ctx := context.Background() // Don't use ctx of enclosing listen method
 
 		for _, l := range listeners {
 			l.OnJobBundleStopped(ctx, jobBundle.ID, jobBundle.Type, jobBundle.Origin)
@@ -138,14 +138,16 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 				type,
 				payload,
 				priority,
-				origin
+				origin,
+				start_at,
 			) VALUES (
 				$1,
 				$2,
 				$3,
 				$4,
 				$5,
-				$6
+				$6,
+				$7
 			)`,
 		job.ID,
 		job.BundleID,
@@ -153,6 +155,7 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 		job.Payload,
 		job.Priority,
 		job.Origin,
+		job.StartAt,
 	)
 }
 
@@ -335,7 +338,6 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 	if err != nil {
 		return nil, err
 	}
-
 	return job, nil
 }
 
@@ -355,12 +357,9 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 		err = tx.QueryRow(
 			`select *
 				from worker.job
-				where
-					started_at is null
-					and
-					(start_at is null or start_at <= $1)
-					and
-					"type" = any($2::text[])
+				where started_at is null
+					and (start_at is null or start_at <= $1)
+					and "type" = any($2::text[])
 				order by
 					priority desc,
 					created_at desc
@@ -632,12 +631,10 @@ func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
 	}
 
 	return db.Conn(ctx).Exec(
-		`delete from worker.job where
-			stopped_at is not null
-			and
-			error_msg is null
-			and
-			bundle_id is null`,
+		`delete from worker.job
+			where stopped_at is not null
+				and	error_msg is null
+				and	bundle_id is null`,
 	)
 }
 
