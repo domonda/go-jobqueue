@@ -28,7 +28,9 @@ func (e errService) DeleteJob(ctx context.Context, jobID uu.ID) error           
 func (e errService) ResetJob(ctx context.Context, jobID uu.ID) error              { return e.err }
 func (e errService) ResetJobs(ctx context.Context, jobIDs uu.IDs) error           { return e.err }
 func (e errService) AddJobBundle(ctx context.Context, jobBundle *JobBundle) error { return e.err }
-func (e errService) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (*JobBundle, error)
+func (e errService) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (*JobBundle, error) {
+	return nil, e.err
+}
 func (e errService) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) error { return e.err }
 func (e errService) GetStatus(context.Context) (*Status, error)                   { return nil, e.err }
 func (e errService) GetAllJobsToDo(context.Context) ([]*Job, error)               { return nil, e.err }
