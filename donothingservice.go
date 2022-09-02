@@ -28,4 +28,4 @@ func (DoNothingService) GetStatus(context.Context) (*Status, error)             
 func (DoNothingService) GetAllJobsToDo(context.Context) ([]*Job, error)               { return nil, nil }
 func (DoNothingService) GetAllJobsWithErrors(context.Context) ([]*Job, error)         { return nil, nil }
 func (DoNothingService) DeleteFinishedJobs(ctx context.Context) error                 { return nil }
-func (DoNothingService) Close() error
+func (DoNothingService) Close() error                                                 { return nil }

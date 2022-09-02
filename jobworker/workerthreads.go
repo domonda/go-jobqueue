@@ -116,9 +116,12 @@ func worker(threadIndex int) {
 	defer log.Debug("worker thread ended").Log()
 
 	for job := nextJob(ctx); job != nil; job = nextJob(ctx) {
-		err := dispatchJob(ctx, job)
+		err := doJobAndSetResultInDB(ctx, job)
 		if err != nil {
-			log.Error("error while dispatching the job").Err(err).Any("job", job).Log()
+			log.Error("error while dispatching the job").
+				Err(err).
+				Any("job", job).
+				Log()
 
 			OnError(err)
 		}

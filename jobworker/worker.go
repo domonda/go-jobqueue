@@ -12,12 +12,12 @@ import (
 )
 
 type Worker interface {
-	DoJob(ctx context.Context, job *jobqueue.Job) (result interface{}, err error)
+	DoJob(ctx context.Context, job *jobqueue.Job) (result any, err error)
 }
 
-type WorkerFunc func(ctx context.Context, job *jobqueue.Job) (result interface{}, err error)
+type WorkerFunc func(ctx context.Context, job *jobqueue.Job) (result any, err error)
 
-func (f WorkerFunc) DoJob(ctx context.Context, job *jobqueue.Job) (result interface{}, err error) {
+func (f WorkerFunc) DoJob(ctx context.Context, job *jobqueue.Job) (result any, err error) {
 	return f(ctx, job)
 }
 
@@ -58,7 +58,7 @@ func RegisteredJobTypes() notnull.StringArray {
 // RegisterFunc uses reflection to register a function with a custom
 // payload argument type as Worker for jobs of type ReflectJobType(arg).
 // The playload JSON of the job will be unmarshalled to the type of the argument.
-func RegisterFunc(workerFunc interface{}) {
+func RegisterFunc(workerFunc any) {
 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), workerFunc)
 
 	registerFunc("REFLECT_PAYLOAD_TYPE", workerFunc)
@@ -67,7 +67,7 @@ func RegisterFunc(workerFunc interface{}) {
 // RegisterFuncForJobType uses reflection to register a function with a custom
 // payload argument type as Worker for jobs of jobType.
 // The playload JSON of the job will be unmarshalled to the type of the argument.
-func RegisterFuncForJobType(jobType string, workerFunc interface{}) {
+func RegisterFuncForJobType(jobType string, workerFunc any) {
 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobType, workerFunc)
 
 	if jobType == "" {
@@ -78,7 +78,7 @@ func RegisterFuncForJobType(jobType string, workerFunc interface{}) {
 }
 
 // registerFunc uses jobType = reflectJobType(payloadType) if jobType is "REFLECT_PAYLOAD_TYPE"
-func registerFunc(jobType string, workerFunc interface{}) {
+func registerFunc(jobType string, workerFunc any) {
 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobType, workerFunc)
 
 	workerFuncVal := reflect.ValueOf(workerFunc)
@@ -139,7 +139,7 @@ func registerFunc(jobType string, workerFunc interface{}) {
 		panic(fmt.Errorf("workerFunc must have 1 or 2 results, but has %d", workerFuncType.NumOut()))
 	}
 
-	Register(jobType, WorkerFunc(func(ctx context.Context, job *jobqueue.Job) (result interface{}, err error) {
+	Register(jobType, WorkerFunc(func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
 		payloadVal := reflect.New(payloadType) // JSON unmarshalling always needs a pointer
 		err = job.Payload.UnmarshalTo(payloadVal.Interface())
 		if err != nil {
@@ -186,7 +186,7 @@ func registerFunc(jobType string, workerFunc interface{}) {
 // 		panic(err)
 // 	}
 
-// 	Register(jobType, WorkerFunc(func(ctx context.Context, job *jobqueue.Job) (result interface{}, err error) {
+// 	Register(jobType, WorkerFunc(func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
 // 		return nil, f(ctx, job.Payload)
 // 	}))
 // }
