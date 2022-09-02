@@ -2,12 +2,12 @@ package jobqueue
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/domonda/go-types/uu"
 )
 
-var service Service
+var service Service = ServiceWithError(errors.New("jobqueue service not initialized"))
 
 func SetService(ctx context.Context, s Service) error {
 	err := s.SetListener(ctx, serviceListener{})
@@ -51,39 +51,4 @@ type Service interface {
 	GetAllJobsWithErrors(context.Context) ([]*Job, error)
 	DeleteFinishedJobs(ctx context.Context) error
 	Close() error
-}
-
-type Status struct {
-	NumJobs       int
-	NumJobBundles int
-	// NumWorkerThreads int
-}
-
-// IsZero returns true if the receiver is nil
-// or dereferenced equal to its zero value.
-// Valid to call on a nil receiver.
-func (s *Status) IsZero() bool {
-	return s == nil || *s == Status{}
-}
-
-// String implements the fmt.Stringer interface.
-// Valid to call on a nil receiver.
-func (s *Status) String() string {
-	if s == nil {
-		return "nil Status"
-	}
-	// return fmt.Sprintf("Status{NumJobs: %d, NumJobBundles: %d, NumWorkerThreads: %d}", s.NumJobs, s.NumJobBundles, s.NumWorkerThreads)
-	return fmt.Sprintf("Status{NumJobs: %d, NumJobBundles: %d}", s.NumJobs, s.NumJobBundles)
-}
-
-func GetStatus(ctx context.Context) (status *Status, err error) {
-	return service.GetStatus(ctx)
-}
-
-func GetAllJobsToDo(ctx context.Context) (jobs []*Job, err error) {
-	return service.GetAllJobsToDo(ctx)
-}
-
-func GetAllJobsWithErrors(ctx context.Context) (jobs []*Job, err error) {
-	return service.GetAllJobsWithErrors(ctx)
 }

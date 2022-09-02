@@ -186,3 +186,11 @@ func ResetJobs(ctx context.Context, jobIDs uu.IDSlice) error {
 func DeleteJob(ctx context.Context, jobID uu.ID) error {
 	return service.DeleteJob(ctx, jobID)
 }
+
+func GetAllJobsToDo(ctx context.Context) (jobs []*Job, err error) {
+	return service.GetAllJobsToDo(ctx)
+}
+
+func GetAllJobsWithErrors(ctx context.Context) (jobs []*Job, err error) {
+	return service.GetAllJobsWithErrors(ctx)
+}
