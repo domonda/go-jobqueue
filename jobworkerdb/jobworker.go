@@ -139,7 +139,7 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 				payload,
 				priority,
 				origin,
-				start_at,
+				start_at
 			) VALUES (
 				$1,
 				$2,
