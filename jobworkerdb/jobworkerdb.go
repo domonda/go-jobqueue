@@ -160,6 +160,13 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 		return jobqueue.ErrClosed
 	}
 
+	if DiscardingJobWorker(ctx) {
+		log.Debug("DiscardingJobWorker").
+			UUID("jobBundleID", jobBundle.ID).
+			Log()
+		return nil
+	}
+
 	if SynchronousJobWorker(ctx) {
 		log.Debug("SynchronousJobWorker").
 			UUID("jobID", job.ID).
@@ -173,13 +180,20 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobBundle) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobBundle)
 
+	// Make sure jobs are initialized for bundle
+	for _, job := range jobBundle.Jobs {
+		job.BundleID.Set(jobBundle.ID)
+	}
+
 	if j.closed {
 		return jobqueue.ErrClosed
 	}
 
-	// Make sure jobs are initialized for bundle
-	for _, job := range jobBundle.Jobs {
-		job.BundleID.Set(jobBundle.ID)
+	if DiscardingJobWorker(ctx) {
+		log.Debug("DiscardingJobWorker").
+			UUID("jobBundleID", jobBundle.ID).
+			Log()
+		return nil
 	}
 
 	if SynchronousJobWorker(ctx) {
