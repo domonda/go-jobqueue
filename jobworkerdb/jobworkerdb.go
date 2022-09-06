@@ -15,12 +15,6 @@ import (
 	"github.com/domonda/go-types/uu"
 )
 
-func InitJobQueue(ctx context.Context) error {
-	db := new(jobworkerDB)
-	jobworker.SetDataBase(db)
-	return jobqueue.SetService(ctx, db)
-}
-
 type jobworkerDB struct {
 	serviceListeners        []jobqueue.ServiceListener
 	hasJobAvailableListener bool
@@ -166,6 +160,13 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 		return jobqueue.ErrClosed
 	}
 
+	if SynchronousJobWorker(ctx) {
+		log.Debug("SynchronousJobWorker").
+			UUID("jobID", job.ID).
+			Log()
+		return jobworker.DoJob(ctx, job)
+	}
+
 	return insertJob(ctx, job)
 }
 
@@ -174,6 +175,30 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 
 	if j.closed {
 		return jobqueue.ErrClosed
+	}
+
+	// Make sure jobs are initialized for bundle
+	for _, job := range jobBundle.Jobs {
+		job.BundleID.Set(jobBundle.ID)
+	}
+
+	if SynchronousJobWorker(ctx) {
+		log.Debug("SynchronousJobWorker").
+			UUID("jobBundleID", jobBundle.ID).
+			Log()
+		for _, job := range jobBundle.Jobs {
+			err = jobworker.DoJob(ctx, job)
+			if err != nil {
+				return err
+			}
+		}
+		j.listenersMtx.Lock()
+		listeners := j.serviceListeners
+		j.listenersMtx.Unlock()
+		for _, listener := range listeners {
+			listener.OnJobBundleStopped(ctx, jobBundle.ID, jobBundle.Type, jobBundle.Origin)
+		}
+		return nil
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
@@ -190,7 +215,6 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		}
 
 		for _, job := range jobBundle.Jobs {
-			job.BundleID.Set(jobBundle.ID)
 			err = insertJob(ctx, job)
 			if err != nil {
 				return err
@@ -331,14 +355,7 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 		return nil, jobqueue.ErrClosed
 	}
 
-	err = db.Conn(ctx).QueryRow(
-		`select * from worker.job where id = $1`,
-		jobID,
-	).ScanStruct(&job)
-	if err != nil {
-		return nil, err
-	}
-	return job, nil
+	return db.QueryStruct[jobqueue.Job](ctx, `select * from worker.job where id = $1`, jobID)
 }
 
 func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job, err error) {

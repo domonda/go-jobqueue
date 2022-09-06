@@ -87,9 +87,8 @@ func nextJob(ctx context.Context) *jobqueue.Job {
 	for {
 		job, err := db.StartNextJobOrNil(ctx)
 		if err != nil {
-			log.Error("Error while retrieving the next job").Err(err).Log()
-
 			OnError(err)
+			log.Error("Error while retrieving the next job").Err(err).Log()
 		}
 		if job != nil {
 			return job
@@ -116,14 +115,13 @@ func worker(threadIndex int) {
 	defer log.Debug("worker thread ended").Log()
 
 	for job := nextJob(ctx); job != nil; job = nextJob(ctx) {
-		err := doJobAndSetResultInDB(ctx, job)
+		err := doJobAndSaveResultInDB(ctx, job)
 		if err != nil {
+			OnError(err)
 			log.Error("error while dispatching the job").
 				Err(err).
 				Any("job", job).
 				Log()
-
-			OnError(err)
 		}
 	}
 }
@@ -159,9 +157,8 @@ func StopThreads(ctx context.Context) {
 
 	err := db.SetJobAvailableListener(ctx, nil)
 	if err != nil {
-		log.Error("error while setting the job available listener").Err(err).Log()
-
 		OnError(err)
+		log.Error("error while setting the job available listener").Err(err).Log()
 	}
 
 	close(checkJobSignal)
