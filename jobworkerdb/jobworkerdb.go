@@ -160,15 +160,15 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 		return jobqueue.ErrClosed
 	}
 
-	if DiscardingJobWorker(ctx) {
-		log.Debug("DiscardingJobWorker").
-			UUID("jobBundleID", jobBundle.ID).
+	if !ShouldDoJob(ctx, job) {
+		log.Debug("Discarding job").
+			UUID("jobID", job.ID).
 			Log()
 		return nil
 	}
 
-	if SynchronousJobWorker(ctx) {
-		log.Debug("SynchronousJobWorker").
+	if SynchronousJobs(ctx) {
+		log.Debug("Synchronous job").
 			UUID("jobID", job.ID).
 			Log()
 		return jobworker.DoJob(ctx, job)
@@ -189,15 +189,15 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		return jobqueue.ErrClosed
 	}
 
-	if DiscardingJobWorker(ctx) {
-		log.Debug("DiscardingJobWorker").
+	if !ShouldDoJobBundle(ctx, jobBundle) {
+		log.Debug("Discarding job-bundle").
 			UUID("jobBundleID", jobBundle.ID).
 			Log()
 		return nil
 	}
 
-	if SynchronousJobWorker(ctx) {
-		log.Debug("SynchronousJobWorker").
+	if SynchronousJobs(ctx) {
+		log.Debug("Synchronous job-bundle").
 			UUID("jobBundleID", jobBundle.ID).
 			Log()
 		for _, job := range jobBundle.Jobs {
