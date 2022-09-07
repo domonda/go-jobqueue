@@ -160,8 +160,8 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 		return jobqueue.ErrClosed
 	}
 
-	if !ShouldDoJob(ctx, job) {
-		log.Debug("Discarding job").
+	if IgnoreJob(ctx, job) {
+		log.Debug("Ignoring job").
 			UUID("jobID", job.ID).
 			Log()
 		return nil
@@ -189,8 +189,8 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		return jobqueue.ErrClosed
 	}
 
-	if !ShouldDoJobBundle(ctx, jobBundle) {
-		log.Debug("Discarding job-bundle").
+	if IgnoreJobBundle(ctx, jobBundle) {
+		log.Debug("Ignoring job-bundle").
 			UUID("jobBundleID", jobBundle.ID).
 			Log()
 		return nil

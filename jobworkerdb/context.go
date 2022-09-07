@@ -16,36 +16,36 @@ func SynchronousJobs(ctx context.Context) bool {
 	return ctx.Value(&synchronousJobsKey) != nil
 }
 
-var shouldDoJobKey int
+var ignoreJobKey int
 
-type ShouldDoJobFunc func(*jobqueue.Job) bool
+type IgnoreJobFunc func(*jobqueue.Job) bool
 
-func NeverDoJobs(*jobqueue.Job) bool { return false }
+func IgnoreAllJobs(*jobqueue.Job) bool { return true }
 
-func ContextWithShouldDoJob(ctx context.Context, shouldDoJob ShouldDoJobFunc) context.Context {
-	return context.WithValue(ctx, &shouldDoJobKey, shouldDoJob)
+func ContextWithIgnoreJob(ctx context.Context, ignoreJob IgnoreJobFunc) context.Context {
+	return context.WithValue(ctx, &ignoreJobKey, ignoreJob)
 }
 
-func ShouldDoJob(ctx context.Context, job *jobqueue.Job) bool {
-	if shouldDoJob, ok := ctx.Value(&shouldDoJobKey).(ShouldDoJobFunc); ok {
-		return shouldDoJob(job)
+func IgnoreJob(ctx context.Context, job *jobqueue.Job) bool {
+	if ignoreJob, ok := ctx.Value(&ignoreJobKey).(IgnoreJobFunc); ok {
+		return ignoreJob(job)
 	}
-	return true
+	return false
 }
 
-var shouldDoJobBundleKey int
+var ignoreJobBundleKey int
 
-type ShouldDoJobBundleFunc func(*jobqueue.JobBundle) bool
+type IgnoreJobBundleFunc func(*jobqueue.JobBundle) bool
 
-func NeverDoJobBundles(*jobqueue.JobBundle) bool { return false }
+func IgnoreAllJobBundles(*jobqueue.JobBundle) bool { return true }
 
-func ContextWithShouldDoJobBundle(ctx context.Context, shouldDoJobBundle ShouldDoJobBundleFunc) context.Context {
-	return context.WithValue(ctx, &shouldDoJobBundleKey, shouldDoJobBundle)
+func ContextWithIgnoreJobBundle(ctx context.Context, ignoreJobBundle IgnoreJobBundleFunc) context.Context {
+	return context.WithValue(ctx, &ignoreJobBundleKey, ignoreJobBundle)
 }
 
-func ShouldDoJobBundle(ctx context.Context, jobBundle *jobqueue.JobBundle) bool {
-	if shouldDoJobBundle, ok := ctx.Value(&shouldDoJobBundleKey).(ShouldDoJobBundleFunc); ok {
-		return shouldDoJobBundle(jobBundle)
+func IgnoreJobBundle(ctx context.Context, jobBundle *jobqueue.JobBundle) bool {
+	if ignoreJobBundle, ok := ctx.Value(&ignoreJobBundleKey).(IgnoreJobBundleFunc); ok {
+		return ignoreJobBundle(jobBundle)
 	}
-	return true
+	return false
 }
