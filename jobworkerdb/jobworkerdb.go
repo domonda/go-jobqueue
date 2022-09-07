@@ -369,7 +369,11 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 		return nil, jobqueue.ErrClosed
 	}
 
-	return db.QueryStruct[jobqueue.Job](ctx, `select * from worker.job where id = $1`, jobID)
+	err = db.Conn(ctx).QueryRow(`select * from worker.job where id = $1`, jobID).ScanStruct(&job)
+	if err != nil {
+		return nil, err
+	}
+	return job, nil
 }
 
 func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job, err error) {
