@@ -6,7 +6,7 @@ require (
 	github.com/domonda/go-errs v0.0.0-20220803101145-9c94ff28df79
 	github.com/domonda/go-sqldb v0.0.0-20220918130832-1bd86f3554aa
 	github.com/domonda/go-types v0.0.0-20220920151337-e0287447716b
-	github.com/domonda/golog v0.0.0-20220725082026-a25cbba874f3
+	github.com/domonda/golog v0.0.0-20221012120706-8a96ced761b1
 )
 
 require (

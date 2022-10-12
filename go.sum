@@ -11,8 +11,8 @@ github.com/domonda/go-sqldb v0.0.0-20220918130832-1bd86f3554aa h1:xSpcCwqihTL97+
 github.com/domonda/go-sqldb v0.0.0-20220918130832-1bd86f3554aa/go.mod h1:VtrKtTbBpKShtNOSCBMlhy4yBm2Gql7gQpnCPkHFTaE=
 github.com/domonda/go-types v0.0.0-20220920151337-e0287447716b h1:hqaZc9hhN15F2lBQ0J8m7NVo7aGjRLbPvvl2lqjT/Qc=
 github.com/domonda/go-types v0.0.0-20220920151337-e0287447716b/go.mod h1:vQKxnrKS+xpjA1AV7gTjTmxer9N5Bunil/lUrq1z32M=
-github.com/domonda/golog v0.0.0-20220725082026-a25cbba874f3 h1:DKdC8X4ti+MoLbk7YuhGe4X6lWmEunH0kSRiz5jtyCc=
-github.com/domonda/golog v0.0.0-20220725082026-a25cbba874f3/go.mod h1:iCKVopSl1CP2dCjfbKI6OjItBU1+n2XQ+eb+91GyQVA=
+github.com/domonda/golog v0.0.0-20221012120706-8a96ced761b1 h1:u2OrL6jLKps/hEwhv23Tkm3H/TsrM8+zEhz565qMg9Q=
+github.com/domonda/golog v0.0.0-20221012120706-8a96ced761b1/go.mod h1:5JdcnBbIOP4dWpaLhlboseUthGya12qAmMtgbz6qQ88=
 github.com/jinzhu/now v1.1.5 h1:/o9tlHleP7gOFmsnYNz3RGnqzefHA47wQpKrrdTIwXQ=
 github.com/lucasb-eyer/go-colorful v1.2.0 h1:1nnpGOrhyZZuNyfu1QjKiUICQ74+3FNCN69Aj6K7nkY=
 github.com/lucasb-eyer/go-colorful v1.2.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
