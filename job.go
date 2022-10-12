@@ -154,6 +154,15 @@ func NewJob(jobType, origin string, payload any, startAt nullable.Time) (*Job, e
 	return NewJobWithPriority(jobType, origin, payload, 0, startAt)
 }
 
+// NewJobReflectType creates a Job but does not add it to the queue.
+// The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
+// If startAt is not null then the job will not start before that time.
+//
+// ReflectJobTypeOfPayload(payload) is used to
+// create a job type string by using reflection on payload.
+// The job type string starts with the package import path of the type
+// followed by a point and the type name.
+// Pointer types will be dereferenced.
 func NewJobReflectType(origin string, payload any, startAt nullable.Time) (*Job, error) {
 	return NewJob(ReflectJobTypeOfPayload(payload), origin, payload, startAt)
 }
