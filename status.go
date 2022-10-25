@@ -1,7 +1,6 @@
 package jobqueue
 
 import (
-	"context"
 	"fmt"
 )
 
@@ -26,8 +25,4 @@ func (s *Status) String() string {
 	}
 	// return fmt.Sprintf("Status{NumJobs: %d, NumJobBundles: %d, NumWorkerThreads: %d}", s.NumJobs, s.NumJobBundles, s.NumWorkerThreads)
 	return fmt.Sprintf("Status{NumJobs: %d, NumJobBundles: %d}", s.NumJobs, s.NumJobBundles)
-}
-
-func GetStatus(ctx context.Context) (status *Status, err error) {
-	return service.GetStatus(ctx)
 }

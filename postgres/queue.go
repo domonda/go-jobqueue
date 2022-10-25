@@ -1,4 +1,4 @@
-package jobworkerdb
+package postgres
 
 import (
 	"context"
@@ -15,8 +15,8 @@ import (
 	"github.com/domonda/go-types/uu"
 )
 
-type jobworkerDB struct {
-	serviceListeners        []jobqueue.ServiceListener
+type queue struct {
+	serviceListeners        []jobqueue.QueueListener
 	hasJobAvailableListener bool
 	listenersMtx            sync.Mutex
 	closed                  bool
@@ -25,37 +25,37 @@ type jobworkerDB struct {
 ///////////////////////////////////////////////////////////////////////////////
 // jobqueue.Service methods
 
-func (j *jobworkerDB) SetListener(ctx context.Context, listener jobqueue.ServiceListener) (err error) {
+func (q *queue) SetListener(ctx context.Context, listener jobqueue.QueueListener) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, listener)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 	if listener == nil {
 		return errs.New("nil jobqueue.ServiceListener")
 	}
 
-	j.listenersMtx.Lock()
-	defer j.listenersMtx.Unlock()
+	q.listenersMtx.Lock()
+	defer q.listenersMtx.Unlock()
 
-	if len(j.serviceListeners) == 0 {
-		err = j.listen(ctx)
+	if len(q.serviceListeners) == 0 {
+		err = q.listen(ctx)
 		if err != nil {
 			return err
 		}
 	}
 
-	j.serviceListeners = append(j.serviceListeners, listener)
+	q.serviceListeners = append(q.serviceListeners, listener)
 	return nil
 }
 
-func (j *jobworkerDB) listen(ctx context.Context) (err error) {
+func (q *queue) listen(ctx context.Context) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
 	onJobStopped := func(channel, payload string) {
 		defer errs.RecoverAndLogPanicWithFuncParams(log.ErrorWriter(), channel, payload)
 
-		if j.closed {
+		if q.closed {
 			return
 		}
 
@@ -66,9 +66,9 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 			return
 		}
 
-		j.listenersMtx.Lock()
-		listeners := j.serviceListeners
-		j.listenersMtx.Unlock()
+		q.listenersMtx.Lock()
+		listeners := q.serviceListeners
+		q.listenersMtx.Unlock()
 
 		ctx := context.Background() // Don't use ctx of enclosing listen method
 
@@ -85,7 +85,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 	onJobBundleStopped := func(channel, payload string) {
 		defer errs.RecoverAndLogPanicWithFuncParams(log.ErrorWriter(), channel, payload)
 
-		if j.closed {
+		if q.closed {
 			return
 		}
 
@@ -96,9 +96,9 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 			return
 		}
 
-		j.listenersMtx.Lock()
-		listeners := j.serviceListeners
-		j.listenersMtx.Unlock()
+		q.listenersMtx.Lock()
+		listeners := q.serviceListeners
+		q.listenersMtx.Unlock()
 
 		ctx := context.Background() // Don't use ctx of enclosing listen method
 
@@ -115,7 +115,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 	return nil
 }
 
-func (*jobworkerDB) unlisten(ctx context.Context) (err error) {
+func (*queue) unlisten(ctx context.Context) (err error) {
 	err1 := db.Conn(ctx).UnlistenChannel("job_stopped")
 	err2 := db.Conn(ctx).UnlistenChannel("job_bundle_stopped")
 	return errs.Combine(err1, err2)
@@ -153,21 +153,21 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	)
 }
 
-func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error) {
+func (q *queue) AddJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, job)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
-	if IgnoreJob(ctx, job) {
+	if jobqueue.IgnoreJob(ctx, job) {
 		log.Debug("Ignoring job").
 			UUID("jobID", job.ID).
 			Log()
 		return nil
 	}
 
-	if SynchronousJobs(ctx) {
+	if jobqueue.SynchronousJobs(ctx) {
 		log.Debug("Synchronous job").
 			UUID("jobID", job.ID).
 			Log()
@@ -177,7 +177,7 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 	return insertJob(ctx, job)
 }
 
-func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobBundle) (err error) {
+func (q *queue) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobBundle) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobBundle)
 
 	// Make sure jobs are initialized for bundle
@@ -185,18 +185,18 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		job.BundleID.Set(jobBundle.ID)
 	}
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
-	if IgnoreJobBundle(ctx, jobBundle) {
+	if jobqueue.IgnoreJobBundle(ctx, jobBundle) {
 		log.Debug("Ignoring job-bundle").
 			UUID("jobBundleID", jobBundle.ID).
 			Log()
 		return nil
 	}
 
-	if SynchronousJobs(ctx) {
+	if jobqueue.SynchronousJobs(ctx) {
 		log.Debug("Synchronous job-bundle").
 			UUID("jobBundleID", jobBundle.ID).
 			Log()
@@ -206,9 +206,9 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 				return err
 			}
 		}
-		j.listenersMtx.Lock()
-		listeners := j.serviceListeners
-		j.listenersMtx.Unlock()
+		q.listenersMtx.Lock()
+		listeners := q.serviceListeners
+		q.listenersMtx.Unlock()
 		for _, listener := range listeners {
 			listener.OnJobBundleStopped(ctx, jobBundle.ID, jobBundle.Type, jobBundle.Origin)
 		}
@@ -238,10 +238,10 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 	})
 }
 
-func (j *jobworkerDB) GetStatus(ctx context.Context) (status *jobqueue.Status, err error) {
+func (q *queue) GetStatus(ctx context.Context) (status *jobqueue.Status, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if q.closed {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -260,10 +260,10 @@ func (j *jobworkerDB) GetStatus(ctx context.Context) (status *jobqueue.Status, e
 	return status, nil
 }
 
-func (j *jobworkerDB) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job, err error) {
+func (q *queue) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if q.closed {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -279,10 +279,10 @@ func (j *jobworkerDB) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job,
 	return jobs, nil
 }
 
-func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueue.Job, err error) {
+func (q *queue) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if q.closed {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -298,27 +298,27 @@ func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueu
 	return jobs, nil
 }
 
-func (j *jobworkerDB) Close() (err error) {
+func (q *queue) Close() (err error) {
 	defer errs.WrapWithFuncParams(&err)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
-	j.closed = true
+	q.closed = true
 
-	j.listenersMtx.Lock()
-	defer j.listenersMtx.Unlock()
+	q.listenersMtx.Lock()
+	defer q.listenersMtx.Unlock()
 
 	ctx := context.Background()
 
-	if j.hasJobAvailableListener {
+	if q.hasJobAvailableListener {
 		err = db.Conn(ctx).UnlistenChannel("job_available")
-		j.hasJobAvailableListener = false
+		q.hasJobAvailableListener = false
 	}
 
-	if len(j.serviceListeners) > 0 {
-		e := j.unlisten(ctx)
+	if len(q.serviceListeners) > 0 {
+		e := q.unlisten(ctx)
 		if e != nil {
 			if err == nil {
 				err = errs.Errorf("error %w from db.unlisten", e)
@@ -334,13 +334,13 @@ func (j *jobworkerDB) Close() (err error) {
 ///////////////////////////////////////////////////////////////////////////////
 // jobqueue.DB methods
 
-func (j *jobworkerDB) SetJobAvailableListener(ctx context.Context, callback func()) (err error) {
+func (q *queue) SetJobAvailableListener(ctx context.Context, callback func()) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, callback)
 
-	j.listenersMtx.Lock()
-	defer j.listenersMtx.Unlock()
+	q.listenersMtx.Lock()
+	defer q.listenersMtx.Unlock()
 
-	if j.hasJobAvailableListener {
+	if q.hasJobAvailableListener {
 		err = db.Conn(ctx).UnlistenChannel("job_available")
 		if err != nil {
 			return err
@@ -348,11 +348,11 @@ func (j *jobworkerDB) SetJobAvailableListener(ctx context.Context, callback func
 	}
 
 	if callback == nil {
-		j.hasJobAvailableListener = false
+		q.hasJobAvailableListener = false
 		return nil
 	}
 
-	j.hasJobAvailableListener = true
+	q.hasJobAvailableListener = true
 	return db.Conn(ctx).ListenOnChannel(
 		"job_available",
 		func(channel, payload string) {
@@ -362,10 +362,10 @@ func (j *jobworkerDB) SetJobAvailableListener(ctx context.Context, callback func
 	)
 }
 
-func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Job, err error) {
+func (q *queue) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID)
 
-	if j.closed {
+	if q.closed {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -376,10 +376,10 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 	return job, nil
 }
 
-func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job, err error) {
+func (q *queue) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if q.closed {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -424,10 +424,10 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 	return job, nil
 }
 
-func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg string, errorData nullable.JSON) (err error) {
+func (q *queue) SetJobError(ctx context.Context, jobID uu.ID, errorMsg string, errorData nullable.JSON) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID, errorMsg, errorData)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
@@ -451,8 +451,8 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 		err = tx.QueryRow(
 			`select b.id
 				from worker.job_bundle as b
-				inner join worker.job as j on j.bundle_id = b.id
-				where j.id = $1
+				inner join worker.job as j on q.bundle_id = b.id
+				where q.id = $1
 				for update skip locked`,
 			jobID,
 		).Scan(&jobBundleID)
@@ -476,10 +476,10 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 	})
 }
 
-func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
+func (q *queue) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
@@ -497,10 +497,10 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 	)
 }
 
-func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) {
+func (q *queue) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobIDs)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
@@ -531,10 +531,10 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 // 	)
 // }
 
-func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result nullable.JSON) (err error) {
+func (q *queue) SetJobResult(ctx context.Context, jobID uu.ID, result nullable.JSON) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID, result)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
@@ -561,8 +561,8 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 		err = tx.QueryRow(
 			`select b.id
 				from worker.job_bundle as b
-					inner join worker.job as j on j.bundle_id = b.id
-				where j.id = $1
+					inner join worker.job as j on q.bundle_id = b.id
+				where q.id = $1
 				for update skip locked`,
 			jobID,
 		).Scan(&jobBundleID)
@@ -586,10 +586,10 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 	})
 }
 
-func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time.Time) (err error) {
+func (q *queue) SetJobStart(ctx context.Context, jobID uu.ID, startAt time.Time) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID, startAt)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
@@ -611,7 +611,7 @@ func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time
 // func (j *jobworkerDB) GetJobResult(jobID uu.ID) (result nullable.JSON, err error) {
 // 	deerrs.WrapWithFuncParamsrror(&err, jobID)
 
-// 	if j.closed {
+// 	if q.closed {
 // 		return jobqueue.ErrClosed
 // 	}
 
@@ -628,40 +628,40 @@ func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time
 // 	return result, nil
 // }
 
-func (j *jobworkerDB) DeleteJob(ctx context.Context, jobID uu.ID) (err error) {
+func (q *queue) DeleteJob(ctx context.Context, jobID uu.ID) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
 	return db.Conn(ctx).Exec("delete from worker.job where id = $1", jobID)
 }
 
-func (j *jobworkerDB) DeleteJobsFromOrigin(ctx context.Context, origin string) (err error) {
+func (q *queue) DeleteJobsFromOrigin(ctx context.Context, origin string) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, origin)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
 	return db.Conn(ctx).Exec("delete from worker.job where origin = $1", origin)
 }
 
-func (j *jobworkerDB) DeleteJobsOfType(ctx context.Context, jobType string) (err error) {
+func (q *queue) DeleteJobsOfType(ctx context.Context, jobType string) (err error) {
 	defer errs.WrapWithFuncParams(&err, jobType)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
 	return db.Conn(ctx).Exec("delete from worker.job where type = $1", jobType)
 }
 
-func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
+func (q *queue) DeleteFinishedJobs(ctx context.Context) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
@@ -673,10 +673,10 @@ func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
 	)
 }
 
-func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobBundle *jobqueue.JobBundle, err error) {
+func (q *queue) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobBundle *jobqueue.JobBundle, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobBundleID)
 
-	if j.closed {
+	if q.closed {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -709,7 +709,7 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 // func (j *jobworkerDB) GetJobBundleJobs(jobBundleID uu.ID) (jobs []*jobqueue.Job, err error) {
 // 	deerrs.WrapWithFuncParamsrror(&err, jobBundleID)
 
-// 	if j.closed {
+// 	if q.closed {
 // 		return nil, jobqueue.ErrClosed
 // 	}
 
@@ -736,7 +736,7 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 // func (j *jobworkerDB) CompletedJobBundleOrNil(jobBundleID uu.ID) (jobBundle *jobqueue.JobBundle, err error) {
 // 	deerrs.WrapWithFuncParamsrror(&err, jobBundleID)
 
-// 	if j.closed {
+// 	if q.closed {
 // 		return nil, jobqueue.ErrClosed
 // 	}
 
@@ -773,10 +773,10 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 // 	return jobBundle, nil
 // }
 
-func (j *jobworkerDB) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) (err error) {
+func (q *queue) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobBundleID)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
@@ -794,30 +794,30 @@ func (j *jobworkerDB) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) (e
 // 	return exec("delete from worker.job_bundle")
 // }
 
-func (j *jobworkerDB) DeleteJobBundlesFromOrigin(ctx context.Context, origin string) (err error) {
+func (q *queue) DeleteJobBundlesFromOrigin(ctx context.Context, origin string) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, origin)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
 	return db.Conn(ctx).Exec("delete from worker.job_bundle where origin = $1", origin)
 }
 
-func (j *jobworkerDB) DeleteJobBundlesOfType(ctx context.Context, bundleType string) (err error) {
+func (q *queue) DeleteJobBundlesOfType(ctx context.Context, bundleType string) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, bundleType)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
 	return db.Conn(ctx).Exec("delete from worker.job_bundle where type = $1", bundleType)
 }
 
-func (j *jobworkerDB) DeleteAllJobsAndBundles(ctx context.Context) (err error) {
+func (q *queue) DeleteAllJobsAndBundles(ctx context.Context) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if q.closed {
 		return jobqueue.ErrClosed
 	}
 
