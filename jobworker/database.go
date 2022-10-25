@@ -17,7 +17,7 @@ func SetDataBase(newDB DataBase) {
 }
 
 type DataBase interface {
-	jobqueue.Service
+	jobqueue.Queue
 
 	SetJobAvailableListener(context.Context, func()) error
 	StartNextJobOrNil(ctx context.Context) (*jobqueue.Job, error)

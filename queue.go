@@ -2,31 +2,12 @@ package jobqueue
 
 import (
 	"context"
-	"errors"
 
 	"github.com/domonda/go-types/uu"
 )
 
-var service Service = ServiceWithError(errors.New("jobqueue service not initialized"))
-
-func SetService(ctx context.Context, s Service) error {
-	err := s.SetListener(ctx, serviceListener{})
-	if err != nil {
-		return err
-	}
-	service = s
-	return nil
-}
-
-func Close() error {
-	if service == nil {
-		return ErrClosed
-	}
-	return service.Close()
-}
-
-type Service interface {
-	SetListener(context.Context, ServiceListener) error
+type Queue interface {
+	SetListener(context.Context, QueueListener) error
 
 	AddJob(ctx context.Context, job *Job) error
 	GetJob(ctx context.Context, jobID uu.ID) (*Job, error)

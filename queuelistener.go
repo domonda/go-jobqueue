@@ -7,15 +7,17 @@ import (
 	"github.com/domonda/go-types/uu"
 )
 
-type ServiceListener interface {
+type QueueListener interface {
 	OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string)
 	OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID, jobBundleType, jobBundleOrigin string)
 }
 
-type serviceListener struct{}
+type queueListener struct {
+	queue Queue
+}
 
-func (serviceListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string) {
-	job, err := service.GetJob(ctx, jobID)
+func (l queueListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string) {
+	job, err := l.queue.GetJob(ctx, jobID)
 	if err != nil {
 		if errs.IsErrNotFound(err) {
 			log.Warn("OnJobStopped called for an already deleted job").
@@ -43,8 +45,8 @@ func (serviceListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, j
 	}
 }
 
-func (serviceListener) OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID, jobBundleType, jobBundleOrigin string) {
-	jobBundle, err := service.GetJobBundle(ctx, jobBundleID)
+func (l queueListener) OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID, jobBundleType, jobBundleOrigin string) {
+	jobBundle, err := l.queue.GetJobBundle(ctx, jobBundleID)
 	if err != nil {
 		log.Error("OnJobBundleStopped GetJobBundle error, ignoring and continuing...").
 			Err(err).
@@ -55,7 +57,7 @@ func (serviceListener) OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID
 		return
 	}
 
-	// jobBundle.Jobs, err = service.GetJobBundleJobs(jobBundleID)
+	// jobBundle.Jobs, err = l.queue.GetJobBundleJobs(jobBundleID)
 	// if err != nil {
 	// 	log.Error().Err(err).UUID("jobBundleID", jobBundleID).Msg("GetJobBundle")
 	// 	return
@@ -78,7 +80,7 @@ func (serviceListener) OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID
 	}
 
 	if !jobBundle.HasError() {
-		err = service.DeleteJobBundle(ctx, jobBundleID)
+		err = l.queue.DeleteJobBundle(ctx, jobBundleID)
 		if err != nil {
 			log.Error("OnJobBundleStopped DeleteJobBundle error").
 				Err(err).

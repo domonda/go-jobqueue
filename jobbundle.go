@@ -1,7 +1,6 @@
 package jobqueue
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -81,14 +80,6 @@ func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDe
 	}
 
 	return jobBundle, nil
-}
-
-func AddBundle(ctx context.Context, jobBundle *JobBundle) (err error) {
-	return service.AddJobBundle(ctx, jobBundle)
-}
-
-func GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobBundle *JobBundle, err error) {
-	return service.GetJobBundle(ctx, jobBundleID)
 }
 
 // func GetJobBundleJobs(jobBundleID uu.ID) (jobs []*Job, err error) {

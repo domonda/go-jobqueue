@@ -1,9 +1,7 @@
-package jobworkerdb
+package jobqueue
 
 import (
 	"context"
-
-	"github.com/domonda/go-jobqueue"
 )
 
 var synchronousJobsKey int
@@ -18,15 +16,15 @@ func SynchronousJobs(ctx context.Context) bool {
 
 var ignoreJobKey int
 
-type IgnoreJobFunc func(*jobqueue.Job) bool
+type IgnoreJobFunc func(*Job) bool
 
-func IgnoreAllJobs(*jobqueue.Job) bool { return true }
+func IgnoreAllJobs(*Job) bool { return true }
 
 func ContextWithIgnoreJob(ctx context.Context, ignoreJob IgnoreJobFunc) context.Context {
 	return context.WithValue(ctx, &ignoreJobKey, ignoreJob)
 }
 
-func IgnoreJob(ctx context.Context, job *jobqueue.Job) bool {
+func IgnoreJob(ctx context.Context, job *Job) bool {
 	if ignoreJob, ok := ctx.Value(&ignoreJobKey).(IgnoreJobFunc); ok {
 		return ignoreJob(job)
 	}
@@ -35,15 +33,15 @@ func IgnoreJob(ctx context.Context, job *jobqueue.Job) bool {
 
 var ignoreJobBundleKey int
 
-type IgnoreJobBundleFunc func(*jobqueue.JobBundle) bool
+type IgnoreJobBundleFunc func(*JobBundle) bool
 
-func IgnoreAllJobBundles(*jobqueue.JobBundle) bool { return true }
+func IgnoreAllJobBundles(*JobBundle) bool { return true }
 
 func ContextWithIgnoreJobBundle(ctx context.Context, ignoreJobBundle IgnoreJobBundleFunc) context.Context {
 	return context.WithValue(ctx, &ignoreJobBundleKey, ignoreJobBundle)
 }
 
-func IgnoreJobBundle(ctx context.Context, jobBundle *jobqueue.JobBundle) bool {
+func IgnoreJobBundle(ctx context.Context, jobBundle *JobBundle) bool {
 	if ignoreJobBundle, ok := ctx.Value(&ignoreJobBundleKey).(IgnoreJobBundleFunc); ok {
 		return ignoreJobBundle(jobBundle)
 	}
