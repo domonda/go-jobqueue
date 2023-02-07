@@ -3,6 +3,7 @@ package jobworkerdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -118,7 +119,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 func (*jobworkerDB) unlisten(ctx context.Context) (err error) {
 	err1 := db.Conn(ctx).UnlistenChannel("job_stopped")
 	err2 := db.Conn(ctx).UnlistenChannel("job_bundle_stopped")
-	return errs.Combine(err1, err2)
+	return errors.Join(err1, err2)
 }
 
 func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {

@@ -2,6 +2,7 @@ package jobworker
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/domonda/go-errs"
@@ -51,7 +52,7 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 
 		job.ErrorMsg.Set(jobErr.Error())
 		job.ErrorData, err = nullable.MarshalJSON(result)
-		return errs.Combine(jobErr, err)
+		return errors.Join(jobErr, err)
 
 	}
 
