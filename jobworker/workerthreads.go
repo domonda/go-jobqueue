@@ -57,7 +57,8 @@ func StartPollingAvailableJobs(interval time.Duration) error {
 }
 
 // StartThreads starts numThreads new threads that are
-// polling postgresdb for jobs to work on
+// polling postgresdb for jobs to work on.
+// The passed context does not cancel the started threads.
 func StartThreads(ctx context.Context, numThreads int) error {
 	if numThreads <= 0 {
 		return errors.New("need at least 1 worker thread")

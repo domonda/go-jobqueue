@@ -3,10 +3,10 @@ module github.com/domonda/go-jobqueue
 go 1.20
 
 require (
-	github.com/domonda/go-errs v0.0.0-20221201115330-819262069697
+	github.com/domonda/go-errs v0.0.0-20230207132857-bf0bda36a13a
 	github.com/domonda/go-sqldb v0.0.0-20230123092034-9bcabeb5b37e
-	github.com/domonda/go-types v0.0.0-20230203114159-093fac1ac65c
-	github.com/domonda/golog v0.0.0-20230124102541-81056aaba2cb
+	github.com/domonda/go-types v0.0.0-20230208170508-3764e04ac15a
+	github.com/domonda/golog v0.0.0-20230209193912-756abaea086f
 )
 
 require (
@@ -18,6 +18,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.14 // indirect
 	github.com/muesli/termenv v0.14.0 // indirect
 	github.com/rivo/uniseg v0.4.3 // indirect
-	golang.org/x/exp v0.0.0-20230206171751-46f607a40771 // indirect
+	golang.org/x/exp v0.0.0-20230213192124-5e25df0256eb // indirect
 	golang.org/x/sys v0.5.0 // indirect
 )
