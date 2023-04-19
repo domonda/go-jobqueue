@@ -37,6 +37,14 @@ func GetService(ctx context.Context) Service {
 	return defaultService
 }
 
+// Close the default service
+func Close() error {
+	if defaultService == nil {
+		return nil
+	}
+	return defaultService.Close()
+}
+
 type Service interface {
 	AddListener(context.Context, ServiceListener) error
 
