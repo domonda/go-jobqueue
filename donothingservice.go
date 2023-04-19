@@ -14,8 +14,8 @@ var _ Service = DoNothingService{}
 // all its method result values.
 type DoNothingService struct{}
 
-func (DoNothingService) SetListener(context.Context, ServiceListener) error {
-	log.Info("DoNothingService.SetListener").Log()
+func (DoNothingService) AddListener(context.Context, ServiceListener) error {
+	log.Info("DoNothingService.AddListener").Log()
 	return nil
 }
 

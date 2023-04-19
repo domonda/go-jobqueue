@@ -26,14 +26,14 @@ type jobworkerDB struct {
 ///////////////////////////////////////////////////////////////////////////////
 // jobqueue.Service methods
 
-func (j *jobworkerDB) SetListener(ctx context.Context, listener jobqueue.ServiceListener) (err error) {
+func (j *jobworkerDB) AddListener(ctx context.Context, listener jobqueue.ServiceListener) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, listener)
 
 	if j.closed {
 		return jobqueue.ErrClosed
 	}
 	if listener == nil {
-		return errs.New("nil jobqueue.ServiceListener")
+		return errs.New("<nil> jobqueue.ServiceListener")
 	}
 
 	j.listenersMtx.Lock()

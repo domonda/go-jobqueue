@@ -12,10 +12,16 @@ type ServiceListener interface {
 	OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID, jobBundleType, jobBundleOrigin string)
 }
 
-type serviceListener struct{}
+func NewDefaultServiceListener(service Service) ServiceListener {
+	return defaultServiceListener{Service: service}
+}
 
-func (serviceListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string) {
-	job, err := service.GetJob(ctx, jobID)
+type defaultServiceListener struct {
+	Service
+}
+
+func (l defaultServiceListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string) {
+	job, err := l.Service.GetJob(ctx, jobID)
 	if err != nil {
 		if errs.IsErrNotFound(err) {
 			log.Warn("OnJobStopped called for an already deleted job").
@@ -43,8 +49,8 @@ func (serviceListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, j
 	}
 }
 
-func (serviceListener) OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID, jobBundleType, jobBundleOrigin string) {
-	jobBundle, err := service.GetJobBundle(ctx, jobBundleID)
+func (l defaultServiceListener) OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID, jobBundleType, jobBundleOrigin string) {
+	jobBundle, err := l.Service.GetJobBundle(ctx, jobBundleID)
 	if err != nil {
 		log.Error("OnJobBundleStopped GetJobBundle error, ignoring and continuing...").
 			Err(err).
@@ -78,7 +84,7 @@ func (serviceListener) OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID
 	}
 
 	if !jobBundle.HasError() {
-		err = service.DeleteJobBundle(ctx, jobBundleID)
+		err = l.Service.DeleteJobBundle(ctx, jobBundleID)
 		if err != nil {
 			log.Error("OnJobBundleStopped DeleteJobBundle error").
 				Err(err).

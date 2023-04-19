@@ -1,7 +1,6 @@
 package jobqueue
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,41 +164,4 @@ func NewJob(jobType, origin string, payload any, startAt nullable.Time) (*Job, e
 // Pointer types will be dereferenced.
 func NewJobReflectType(origin string, payload any, startAt nullable.Time) (*Job, error) {
 	return NewJob(ReflectJobTypeOfPayload(payload), origin, payload, startAt)
-}
-
-func Add(ctx context.Context, job *Job) error {
-	return service.AddJob(ctx, job)
-}
-
-func GetJob(ctx context.Context, jobID uu.ID) (*Job, error) {
-	return service.GetJob(ctx, jobID)
-}
-
-func DeleteFinishedJobs(ctx context.Context) error {
-	return service.DeleteFinishedJobs(ctx)
-}
-
-// ResetJob resets the processing state of a job in the queue
-// so that the job is ready to be re-processed.
-func ResetJob(ctx context.Context, jobID uu.ID) error {
-	return service.ResetJob(ctx, jobID)
-}
-
-// ResetJobs resets the processing state of multiple jobs in the queue
-// so that they are ready to be re-processed.
-func ResetJobs(ctx context.Context, jobIDs uu.IDSlice) error {
-	return service.ResetJobs(ctx, jobIDs)
-}
-
-// DeleteJob deletes a job from the queue.
-func DeleteJob(ctx context.Context, jobID uu.ID) error {
-	return service.DeleteJob(ctx, jobID)
-}
-
-func GetAllJobsToDo(ctx context.Context) (jobs []*Job, err error) {
-	return service.GetAllJobsToDo(ctx)
-}
-
-func GetAllJobsWithErrors(ctx context.Context) (jobs []*Job, err error) {
-	return service.GetAllJobsWithErrors(ctx)
 }

@@ -22,7 +22,7 @@ func ServiceWithError(err error) Service {
 	return errService{err}
 }
 
-func (e errService) SetListener(context.Context, ServiceListener) error           { return e.err }
+func (e errService) AddListener(context.Context, ServiceListener) error           { return e.err }
 func (e errService) AddJob(ctx context.Context, job *Job) error                   { return e.err }
 func (e errService) GetJob(ctx context.Context, jobID uu.ID) (*Job, error)        { return nil, e.err }
 func (e errService) DeleteJob(ctx context.Context, jobID uu.ID) error             { return e.err }

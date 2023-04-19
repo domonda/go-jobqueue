@@ -12,6 +12,14 @@ var log = rootlog.NewPackageLogger("jobworkerdb")
 
 func InitJobQueue(ctx context.Context) error {
 	db := new(jobworkerDB)
+
+	err := db.AddListener(ctx, jobqueue.NewDefaultServiceListener(db))
+	if err != nil {
+		return err
+	}
+
 	jobworker.SetDataBase(db)
-	return jobqueue.SetService(ctx, db)
+
+	jobqueue.SetDefaultService(db)
+	return nil
 }
