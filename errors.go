@@ -8,7 +8,8 @@ import (
 )
 
 const (
-	ErrClosed errs.Sentinel = "job queue closed"
+	ErrNotInitialized errs.Sentinel = "jobqueue service not initialized"
+	ErrClosed         errs.Sentinel = "jobqueue is closed"
 )
 
 var _ Service = errService{}
