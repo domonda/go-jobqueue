@@ -7,76 +7,79 @@ import (
 	"github.com/domonda/go-types/uu"
 )
 
-var _ Service = DoNothingService{}
+// DoNothingService returns a Service
+// that does nothing except logging method calls
+// and returning nil for all result values.
+func DoNothingService() Service {
+	return doNothingService{}
+}
 
-// DoNothingService is a Service implementation
-// that does nothing and returns nil for
-// all its method result values.
-type DoNothingService struct{}
+type doNothingService struct{}
 
-func (DoNothingService) AddListener(context.Context, ServiceListener) error {
+func (doNothingService) AddListener(context.Context, ServiceListener) error {
 	log.Info("DoNothingService.AddListener").Log()
 	return nil
 }
 
-func (DoNothingService) AddJob(ctx context.Context, job *Job) error {
+func (doNothingService) AddJob(ctx context.Context, job *Job) error {
 	log.Info("DoNothingService.AddJob").Log()
 	return nil
 }
 
-func (DoNothingService) GetJob(ctx context.Context, jobID uu.ID) (*Job, error) {
+func (doNothingService) GetJob(ctx context.Context, jobID uu.ID) (*Job, error) {
 	return nil, errors.New("DoNothingService.GetJob can't return jobs")
 }
 
-func (DoNothingService) DeleteJob(ctx context.Context, jobID uu.ID) error {
+func (doNothingService) DeleteJob(ctx context.Context, jobID uu.ID) error {
 	log.Info("DoNothingService.DeleteJob").Log()
 	return nil
 }
 
-func (DoNothingService) ResetJob(ctx context.Context, jobID uu.ID) error {
+func (doNothingService) ResetJob(ctx context.Context, jobID uu.ID) error {
 	log.Info("DoNothingService.ResetJob").Log()
 	return nil
 }
 
-func (DoNothingService) ResetJobs(ctx context.Context, jobIDs uu.IDs) error {
+func (doNothingService) ResetJobs(ctx context.Context, jobIDs uu.IDs) error {
 	log.Info("DoNothingService.ResetJobs").Log()
 	return nil
 }
 
-func (DoNothingService) AddJobBundle(ctx context.Context, jobBundle *JobBundle) error {
+func (doNothingService) AddJobBundle(ctx context.Context, jobBundle *JobBundle) error {
 	log.Info("DoNothingService.AddJobBundle").Log()
 	return nil
 }
 
-func (DoNothingService) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (*JobBundle, error) {
+func (doNothingService) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (*JobBundle, error) {
 	return nil, errors.New("DoNothingService.GetJobBundle can't return jobs bundles")
 }
 
-func (DoNothingService) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) error {
+func (doNothingService) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) error {
 	log.Info("DoNothingService.DeleteJobBundle").Log()
 	return nil
 }
 
-func (DoNothingService) GetStatus(context.Context) (*Status, error) {
+func (doNothingService) GetStatus(context.Context) (*Status, error) {
 	log.Info("DoNothingService.GetStatus").Log()
 	return new(Status), nil
 }
 
-func (DoNothingService) GetAllJobsToDo(context.Context) ([]*Job, error) {
+func (doNothingService) GetAllJobsToDo(context.Context) ([]*Job, error) {
 	log.Info("DoNothingService.GetAllJobsToDo").Log()
 	return nil, nil
 }
 
-func (DoNothingService) GetAllJobsWithErrors(context.Context) ([]*Job, error) {
+func (doNothingService) GetAllJobsWithErrors(context.Context) ([]*Job, error) {
 	log.Info("DoNothingService.GetAllJobsWithErrors").Log()
 	return nil, nil
 }
 
-func (DoNothingService) DeleteFinishedJobs(ctx context.Context) error {
+func (doNothingService) DeleteFinishedJobs(ctx context.Context) error {
 	log.Info("DoNothingService.DeleteFinishedJobs").Log()
 	return nil
 }
 
-func (DoNothingService) Close() error {
+func (doNothingService) Close() error {
+	log.Info("DoNothingService.Close").Log()
 	return nil
 }
