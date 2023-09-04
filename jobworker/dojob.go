@@ -8,11 +8,16 @@ import (
 	"github.com/domonda/go-errs"
 	"github.com/domonda/go-jobqueue"
 	"github.com/domonda/go-types/nullable"
+	"github.com/domonda/golog"
 )
 
 // DoJob does a job synchronously and sets the job.Result
 // if there was no error or sets job.ErrorMsg and job.ErrorData
 // in addition to returning any error.
+//
+// The job.ID is added to the context that's passed to the
+// job worker function as golog attribute with the key "jobID".
+//
 // StartedAt, StoppedAt, and UpdatedAt are not modified.
 func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer func() {
@@ -34,7 +39,8 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 		return errs.Errorf("no worker for job of type '%s'", job.Type)
 	}
 
-	result, jobErr := worker.DoJob(ctx, job)
+	jobCtx := golog.ContextWithAttribs(ctx, golog.UUID{Key: "jobID", Val: job.ID})
+	result, jobErr := worker.DoJob(jobCtx, job)
 	if jobErr != nil {
 		errorTitle := errs.Root(jobErr).Error()
 		if nl := strings.IndexByte(errorTitle, '\n'); nl > 0 {
