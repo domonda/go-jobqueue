@@ -89,7 +89,7 @@ func nextJob(ctx context.Context) *jobqueue.Job {
 		job, err := db.StartNextJobOrNil(ctx)
 		if err != nil {
 			OnError(err)
-			log.Error("Error while retrieving the next job").Err(err).Log()
+			log.ErrorCtx(ctx, "Error while retrieving the next job").Err(err).Log()
 		}
 		if job != nil {
 			return job
@@ -119,7 +119,7 @@ func worker(threadIndex int) {
 		err := doJobAndSaveResultInDB(ctx, job)
 		if err != nil {
 			OnError(err)
-			log.Error("error while dispatching the job").
+			log.ErrorCtx(ctx, "error while dispatching the job").
 				Err(err).
 				Any("job", job).
 				Log()
@@ -159,7 +159,7 @@ func StopThreads(ctx context.Context) {
 	err := db.SetJobAvailableListener(ctx, nil)
 	if err != nil {
 		OnError(err)
-		log.Error("error while setting the job available listener").Err(err).Log()
+		log.ErrorCtx(ctx, "error while setting the job available listener").Err(err).Log()
 	}
 
 	close(checkJobSignal)

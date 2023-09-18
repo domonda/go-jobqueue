@@ -50,8 +50,7 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 		errorTitle = strings.TrimSpace(errorTitle)
 
 		OnError(jobErr)
-		log.Errorf("Job error: %s", errorTitle).
-			UUID("jobID", job.ID).
+		log.ErrorfCtx(jobCtx, "Job error: %s", errorTitle).
 			Any("job", job).
 			Err(jobErr).
 			Log()
@@ -74,7 +73,7 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 		e := db.SetJobError(ctx, job.ID, job.ErrorMsg.Get(), job.ErrorData)
 		if e != nil {
 			OnError(e)
-			log.Error("Error while updating job error in the database").
+			log.ErrorCtx(ctx, "Error while updating job error in the database").
 				UUID("jobID", job.ID).
 				Any("job", job).
 				Err(e).

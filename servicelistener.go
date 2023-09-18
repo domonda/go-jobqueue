@@ -30,7 +30,7 @@ func (l defaultServiceListener) OnJobStopped(ctx context.Context, jobID uu.ID, j
 				Str("jobOrigin", jobOrigin).
 				Log()
 		} else {
-			log.Error("OnJobStopped GetJob error").
+			log.ErrorCtx(ctx, "OnJobStopped GetJob error").
 				Err(err).
 				UUID("jobID", jobID).
 				Str("jobType", jobType).
@@ -52,7 +52,7 @@ func (l defaultServiceListener) OnJobStopped(ctx context.Context, jobID uu.ID, j
 func (l defaultServiceListener) OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID, jobBundleType, jobBundleOrigin string) {
 	jobBundle, err := l.Service.GetJobBundle(ctx, jobBundleID)
 	if err != nil {
-		log.Error("OnJobBundleStopped GetJobBundle error, ignoring and continuing...").
+		log.ErrorCtx(ctx, "OnJobBundleStopped GetJobBundle error, ignoring and continuing...").
 			Err(err).
 			UUID("jobBundleID", jobBundleID).
 			Str("jobBundleType", jobBundleType).
@@ -63,7 +63,7 @@ func (l defaultServiceListener) OnJobBundleStopped(ctx context.Context, jobBundl
 
 	// jobBundle.Jobs, err = service.GetJobBundleJobs(jobBundleID)
 	// if err != nil {
-	// 	log.Error().Err(err).UUID("jobBundleID", jobBundleID).Msg("GetJobBundle")
+	// 	log.ErrorCtx(ctx, ).Err(err).UUID("jobBundleID", jobBundleID).Msg("GetJobBundle")
 	// 	return
 	// }
 
@@ -86,7 +86,7 @@ func (l defaultServiceListener) OnJobBundleStopped(ctx context.Context, jobBundl
 	if !jobBundle.HasError() {
 		err = l.Service.DeleteJobBundle(ctx, jobBundleID)
 		if err != nil {
-			log.Error("OnJobBundleStopped DeleteJobBundle error").
+			log.ErrorCtx(ctx, "OnJobBundleStopped DeleteJobBundle error").
 				Err(err).
 				UUID("jobBundleID", jobBundleID).
 				Str("jobBundleType", jobBundleType).

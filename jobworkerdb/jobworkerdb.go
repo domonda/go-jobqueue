@@ -63,7 +63,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 		var job jobqueue.Job
 		err := json.Unmarshal([]byte(payload), &job)
 		if err != nil {
-			log.Error("onJobStopped").Err(err).Log()
+			log.ErrorCtx(ctx, "onJobStopped").Err(err).Log()
 			return
 		}
 
@@ -93,7 +93,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 		var jobBundle jobqueue.JobBundle
 		err := json.Unmarshal([]byte(payload), &jobBundle)
 		if err != nil {
-			log.Error("onJobBundleStopped").Err(err).Log()
+			log.ErrorCtx(ctx, "onJobBundleStopped").Err(err).Log()
 			return
 		}
 
