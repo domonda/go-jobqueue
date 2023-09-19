@@ -272,7 +272,7 @@ func (j *jobworkerDB) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job,
 		`select *
 			from worker.job
 			where stopped_at is null
-			order by created_at desc`,
+			order by start_at nulls first, created_at`,
 	).ScanStructSlice(&jobs)
 	if err != nil {
 		return nil, err
@@ -313,7 +313,7 @@ func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueu
 		`select *
 			from worker.job
 			where error_msg is not null
-			order by stopped_at desc`,
+			order by stopped_at`,
 	).ScanStructSlice(&jobs)
 	if err != nil {
 		return nil, err
