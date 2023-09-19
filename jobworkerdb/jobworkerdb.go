@@ -280,6 +280,28 @@ func (j *jobworkerDB) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job,
 	return jobs, nil
 }
 
+func (j *jobworkerDB) GetAllJobsStartedBefore(ctx context.Context, before time.Time) (jobs []*jobqueue.Job, err error) {
+	defer errs.WrapWithFuncParams(&err, ctx)
+
+	if j.closed {
+		return nil, jobqueue.ErrClosed
+	}
+
+	err = db.Conn(ctx).QueryRows(
+		`select *
+			from worker.job
+			where started_at is not null
+				and started_at < $1
+				and stopped_at is null
+			order by started_at`,
+		before,
+	).ScanStructSlice(&jobs)
+	if err != nil {
+		return nil, err
+	}
+	return jobs, nil
+}
+
 func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 

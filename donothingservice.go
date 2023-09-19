@@ -3,6 +3,7 @@ package jobqueue
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/domonda/go-types/uu"
 )
@@ -66,6 +67,11 @@ func (doNothingService) GetStatus(context.Context) (*Status, error) {
 
 func (doNothingService) GetAllJobsToDo(context.Context) ([]*Job, error) {
 	log.Info("DoNothingService.GetAllJobsToDo").Log()
+	return nil, nil
+}
+
+func (doNothingService) GetAllJobsStartedBefore(ctx context.Context, since time.Time) ([]*Job, error) {
+	log.Info("DoNothingService.GetAllJobsStartedBefore").Log()
 	return nil, nil
 }
 

@@ -2,6 +2,7 @@ package jobqueue
 
 import (
 	"context"
+	"time"
 
 	"github.com/domonda/go-errs"
 	"github.com/domonda/go-types/uu"
@@ -36,5 +37,8 @@ func (e errService) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) erro
 func (e errService) GetStatus(context.Context) (*Status, error)                   { return nil, e.err }
 func (e errService) GetAllJobsToDo(context.Context) ([]*Job, error)               { return nil, e.err }
 func (e errService) GetAllJobsWithErrors(context.Context) ([]*Job, error)         { return nil, e.err }
-func (e errService) DeleteFinishedJobs(ctx context.Context) error                 { return e.err }
-func (e errService) Close() error                                                 { return e.err }
+func (e errService) GetAllJobsStartedBefore(ctx context.Context, since time.Time) ([]*Job, error) {
+	return nil, e.err
+}
+func (e errService) DeleteFinishedJobs(ctx context.Context) error { return e.err }
+func (e errService) Close() error                                 { return e.err }

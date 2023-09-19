@@ -2,6 +2,7 @@ package jobqueue
 
 import (
 	"context"
+	"time"
 
 	"github.com/domonda/go-types/uu"
 )
@@ -68,6 +69,7 @@ type Service interface {
 
 	GetStatus(context.Context) (*Status, error)
 	GetAllJobsToDo(context.Context) ([]*Job, error)
+	GetAllJobsStartedBefore(ctx context.Context, since time.Time) ([]*Job, error)
 	GetAllJobsWithErrors(context.Context) ([]*Job, error)
 	DeleteFinishedJobs(ctx context.Context) error
 	Close() error
@@ -104,6 +106,10 @@ func DeleteJob(ctx context.Context, jobID uu.ID) error {
 
 func GetAllJobsToDo(ctx context.Context) (jobs []*Job, err error) {
 	return GetService(ctx).GetAllJobsToDo(ctx)
+}
+
+func GetAllJobsStartedBefore(ctx context.Context, since time.Time) (jobs []*Job, err error) {
+	return GetService(ctx).GetAllJobsStartedBefore(ctx, since)
 }
 
 func GetAllJobsWithErrors(ctx context.Context) (jobs []*Job, err error) {
