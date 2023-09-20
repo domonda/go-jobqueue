@@ -3,10 +3,10 @@ module github.com/domonda/go-jobqueue
 go 1.21
 
 require (
-	github.com/domonda/go-errs v0.0.0-20230810132956-1b6272f9fc8f
+	github.com/domonda/go-errs v0.0.0-20230920094343-6b122da4d22f
 	github.com/domonda/go-sqldb v0.0.0-20230907124910-2897579efed9
 	github.com/domonda/go-types v0.0.0-20230906101320-38d31a04c999
-	github.com/domonda/golog v0.0.0-20230918195603-76d7dd4c5940
+	github.com/domonda/golog v0.0.0-20230920155601-d446460c84a7
 )
 
 require (
