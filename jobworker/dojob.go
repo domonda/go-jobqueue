@@ -58,7 +58,6 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 		job.ErrorMsg.Set(jobErr.Error())
 		job.ErrorData, err = nullable.MarshalJSON(result)
 		return errors.Join(jobErr, err)
-
 	}
 
 	job.Result, err = nullable.MarshalJSON(result)
@@ -70,7 +69,11 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 
 	err = DoJob(ctx, job)
 	if err != nil {
-		e := db.SetJobError(ctx, job.ID, job.ErrorMsg.Get(), job.ErrorData)
+		// job.ErrorMsg might be null if DoJob returns an error
+		// that was not returned from the jobworker but from
+		// some other job-queue logic error,
+		errorMsg := job.ErrorMsg.StringOr(err.Error())
+		e := db.SetJobError(ctx, job.ID, errorMsg, job.ErrorData)
 		if e != nil {
 			OnError(e)
 			log.ErrorCtx(ctx, "Error while updating job error in the database").
