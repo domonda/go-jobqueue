@@ -125,7 +125,7 @@ func (*jobworkerDB) unlisten(ctx context.Context) (err error) {
 func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, job)
 
-	return db.Conn(ctx).Exec(
+	return db.Exec(ctx,
 		`INSERT INTO worker.job
 			(
 				id,
@@ -217,7 +217,7 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
-		err = db.Conn(ctx).Exec(
+		err = db.Exec(ctx,
 			`insert into worker.job_bundle (id, type, origin, num_jobs)
 				values ($1, $2, $3, $4)`,
 			jobBundle.ID,
@@ -506,7 +506,7 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec(
+	return db.Exec(ctx,
 		`update worker.job
 			set
 				started_at=null,
@@ -527,7 +527,7 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec(
+	return db.Exec(ctx,
 		`update worker.job
 			set
 				started_at=null,
@@ -616,7 +616,7 @@ func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec(
+	return db.Exec(ctx,
 		`update worker.job
 			set
 				start_at=$1,
@@ -658,7 +658,7 @@ func (j *jobworkerDB) DeleteJob(ctx context.Context, jobID uu.ID) (err error) {
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec("delete from worker.job where id = $1", jobID)
+	return db.Exec(ctx, "delete from worker.job where id = $1", jobID)
 }
 
 func (j *jobworkerDB) DeleteJobsFromOrigin(ctx context.Context, origin string) (err error) {
@@ -668,7 +668,7 @@ func (j *jobworkerDB) DeleteJobsFromOrigin(ctx context.Context, origin string) (
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec("delete from worker.job where origin = $1", origin)
+	return db.Exec(ctx, "delete from worker.job where origin = $1", origin)
 }
 
 func (j *jobworkerDB) DeleteJobsOfType(ctx context.Context, jobType string) (err error) {
@@ -678,7 +678,7 @@ func (j *jobworkerDB) DeleteJobsOfType(ctx context.Context, jobType string) (err
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec("delete from worker.job where type = $1", jobType)
+	return db.Exec(ctx, "delete from worker.job where type = $1", jobType)
 }
 
 func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
@@ -688,7 +688,7 @@ func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec(
+	return db.Exec(ctx,
 		`delete from worker.job
 			where stopped_at is not null
 				and	error_msg is null
@@ -803,7 +803,7 @@ func (j *jobworkerDB) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) (e
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec("delete from worker.job_bundle where id = $1", jobBundleID)
+	return db.Exec(ctx, "delete from worker.job_bundle where id = $1", jobBundleID)
 }
 
 // func (j *jobworkerDB) DeleteAll() (err error) {
@@ -824,7 +824,7 @@ func (j *jobworkerDB) DeleteJobBundlesFromOrigin(ctx context.Context, origin str
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec("delete from worker.job_bundle where origin = $1", origin)
+	return db.Exec(ctx, "delete from worker.job_bundle where origin = $1", origin)
 }
 
 func (j *jobworkerDB) DeleteJobBundlesOfType(ctx context.Context, bundleType string) (err error) {
@@ -834,7 +834,7 @@ func (j *jobworkerDB) DeleteJobBundlesOfType(ctx context.Context, bundleType str
 		return jobqueue.ErrClosed
 	}
 
-	return db.Conn(ctx).Exec("delete from worker.job_bundle where type = $1", bundleType)
+	return db.Exec(ctx, "delete from worker.job_bundle where type = $1", bundleType)
 }
 
 func (j *jobworkerDB) DeleteAllJobsAndBundles(ctx context.Context) (err error) {
@@ -845,10 +845,10 @@ func (j *jobworkerDB) DeleteAllJobsAndBundles(ctx context.Context) (err error) {
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
-		err = db.Conn(ctx).Exec("delete from worker.job_bundle")
+		err = db.Exec(ctx, "delete from worker.job_bundle")
 		if err != nil {
 			return err
 		}
-		return db.Conn(ctx).Exec("delete from worker.job")
+		return db.Exec(ctx, "delete from worker.job")
 	})
 }
