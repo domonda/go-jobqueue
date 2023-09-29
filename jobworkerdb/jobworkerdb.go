@@ -247,7 +247,7 @@ func (j *jobworkerDB) GetStatus(ctx context.Context) (status *jobqueue.Status, e
 	}
 
 	status = new(jobqueue.Status)
-	err = db.Conn(ctx).QueryRow(
+	err = db.QueryRow(ctx,
 		`select
 			(select count(*) from worker.job)        as num_jobs,
 			(select count(*) from worker.job_bundle) as num_job_bundles`,
@@ -268,7 +268,7 @@ func (j *jobworkerDB) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job,
 		return nil, jobqueue.ErrClosed
 	}
 
-	err = db.Conn(ctx).QueryRows(
+	err = db.QueryRows(ctx,
 		`select *
 			from worker.job
 			where stopped_at is null
@@ -287,7 +287,7 @@ func (j *jobworkerDB) GetAllJobsStartedBefore(ctx context.Context, before time.T
 		return nil, jobqueue.ErrClosed
 	}
 
-	err = db.Conn(ctx).QueryRows(
+	err = db.QueryRows(ctx,
 		`select *
 			from worker.job
 			where started_at is not null
@@ -309,7 +309,7 @@ func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueu
 		return nil, jobqueue.ErrClosed
 	}
 
-	err = db.Conn(ctx).QueryRows(
+	err = db.QueryRows(ctx,
 		`select *
 			from worker.job
 			where error_msg is not null
@@ -392,7 +392,7 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 		return nil, jobqueue.ErrClosed
 	}
 
-	err = db.Conn(ctx).QueryRow(`select * from worker.job where id = $1`, jobID).ScanStruct(&job)
+	err = db.QueryRow(ctx, `select * from worker.job where id = $1`, jobID).ScanStruct(&job)
 	if err != nil {
 		return nil, err
 	}
@@ -704,7 +704,7 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 	}
 
 	err = db.TransactionReadOnly(ctx, func(ctx context.Context) error {
-		err = db.Conn(ctx).QueryRow(
+		err = db.QueryRow(ctx,
 			`select *
 				from worker.job_bundle
 				where id = $1`,
@@ -714,7 +714,7 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 			return err
 		}
 
-		return db.Conn(ctx).QueryRows(
+		return db.QueryRows(ctx,
 			`select *
 				from worker.job
 				where bundle_id = $1
