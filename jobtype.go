@@ -8,7 +8,7 @@ import (
 // The job type string starts with the package import path of the type
 // followed by a point and the type name.
 // Pointer types will be dereferenced.
-func ReflectJobTypeOfPayload(payload interface{}) string {
+func ReflectJobTypeOfPayload(payload any) string {
 	return JobTypeOfPayloadType(reflect.TypeOf(payload))
 }
 

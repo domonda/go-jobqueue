@@ -4,7 +4,7 @@ import "fmt"
 
 type JobDesc struct {
 	Type     string
-	Payload  interface{}
+	Payload  any
 	Priority int64
 	Origin   string
 }

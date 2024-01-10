@@ -128,7 +128,7 @@ func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDe
 
 // AddJobBundleReflectJobs adds a job bundle of jobBundleType from jobsAndBundleSource.
 // A job will be added for every payload with the passed priority, of ReflectJobType(payload) and the origin jobsAndBundleSource.
-// func AddJobBundleReflectJobs(jobBundleID uu.ID, jobBundleType, jobsAndBundleSource string, priority int64, jobPayloads ...interface{}) (jobBundleID uu.ID, err error) {
+// func AddJobBundleReflectJobs(jobBundleID uu.ID, jobBundleType, jobsAndBundleSource string, priority int64, jobPayloads ...any) (jobBundleID uu.ID, err error) {
 // 	defer errs.WrapWithFuncParams(&err, ctx, jobBundleID, jobBundleType, jobsAndBundleSource, priority, jobPayloads)
 
 // 	if len(jobPayloads) == 0 {
@@ -147,7 +147,7 @@ func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDe
 // 	return service.AddJobBundle(jobBundleID, jobBundleType, jobsAndBundleSource, jobs)
 // }
 
-// func AddJobBundleReflectJobsReportResult(jobBundleID uu.ID, jobBundleType, jobsAndBundleSource string, priority int64, jobPayloads ...interface{}) (jobBundleID uu.ID, resultChan <-chan *JobBundle, err error) {
+// func AddJobBundleReflectJobsReportResult(jobBundleID uu.ID, jobBundleType, jobsAndBundleSource string, priority int64, jobPayloads ...any) (jobBundleID uu.ID, resultChan <-chan *JobBundle, err error) {
 // 	defer errs.WrapWithFuncParams(&err, ctx, jobBundleID, jobBundleType, jobsAndBundleSource, priority, jobPayloads)
 
 // 	if len(jobPayloads) == 0 {
