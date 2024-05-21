@@ -4,9 +4,9 @@ go 1.22
 
 require (
 	github.com/domonda/go-errs v0.0.0-20240301142737-8fde935c9bd4
-	github.com/domonda/go-sqldb v0.0.0-20240122205319-56db59ae89d2
-	github.com/domonda/go-types v0.0.0-20240301143218-7f4371e713b4
-	github.com/domonda/golog v0.0.0-20240301143815-6e76504f48e8
+	github.com/domonda/go-sqldb v0.0.0-20240421041325-ab31a86575fd
+	github.com/domonda/go-types v0.0.0-20240514083716-b9f8b57b701d
+	github.com/domonda/golog v0.0.0-20240413045622-e718d2ebc935
 )
 
 require (
@@ -18,5 +18,5 @@ require (
 	github.com/mattn/go-runewidth v0.0.15 // indirect
 	github.com/muesli/termenv v0.15.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	golang.org/x/sys v0.17.0 // indirect
+	golang.org/x/sys v0.20.0 // indirect
 )

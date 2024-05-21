@@ -26,6 +26,12 @@ func ContextWithIgnoreJob(ctx context.Context, ignoreJob IgnoreJobFunc) context.
 	return context.WithValue(ctx, &ignoreJobKey, ignoreJob)
 }
 
+func ContextWithIgnoreJobType(ctx context.Context, ignoreJobType string) context.Context {
+	return ContextWithIgnoreJob(ctx, func(job *jobqueue.Job) (ignore bool) {
+		return job.Type == ignoreJobType
+	})
+}
+
 func IgnoreJob(ctx context.Context, job *jobqueue.Job) bool {
 	if ignoreJob, ok := ctx.Value(&ignoreJobKey).(IgnoreJobFunc); ok {
 		return ignoreJob(job)
