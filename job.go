@@ -75,7 +75,7 @@ func (j *Job) String() string {
 // NewJobWithPriority creates a Job but does not add it to the queue.
 // The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
 // If startAt is not null then the job will not start before that time.
-func NewJobWithPriority(jobType, origin string, payload any, priority int64, startAt nullable.Time) (*Job, error) {
+func NewJobWithPriority(id uu.ID, jobType, origin string, payload any, priority int64, startAt nullable.Time) (*Job, error) {
 	if jobType == "" {
 		return nil, errors.New("empty jobType")
 	}
@@ -133,7 +133,7 @@ func NewJobWithPriority(jobType, origin string, payload any, priority int64, sta
 
 	now := time.Now()
 	job := &Job{
-		ID:        uu.IDv4(),
+		ID:        id,
 		Type:      jobType,
 		Payload:   payloadJSON,
 		Origin:    origin,
@@ -149,8 +149,8 @@ func NewJobWithPriority(jobType, origin string, payload any, priority int64, sta
 // NewJob creates a Job but does not add it to the queue.
 // The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
 // If startAt is not null then the job will not start before that time.
-func NewJob(jobType, origin string, payload any, startAt nullable.Time) (*Job, error) {
-	return NewJobWithPriority(jobType, origin, payload, 0, startAt)
+func NewJob(id uu.ID, jobType, origin string, payload any, startAt nullable.Time) (*Job, error) {
+	return NewJobWithPriority(id, jobType, origin, payload, 0, startAt)
 }
 
 // NewJobReflectType creates a Job but does not add it to the queue.
@@ -162,6 +162,6 @@ func NewJob(jobType, origin string, payload any, startAt nullable.Time) (*Job, e
 // The job type string starts with the package import path of the type
 // followed by a point and the type name.
 // Pointer types will be dereferenced.
-func NewJobReflectType(origin string, payload any, startAt nullable.Time) (*Job, error) {
-	return NewJob(ReflectJobTypeOfPayload(payload), origin, payload, startAt)
+func NewJobReflectType(id uu.ID, origin string, payload any, startAt nullable.Time) (*Job, error) {
+	return NewJob(id, ReflectJobTypeOfPayload(payload), origin, payload, startAt)
 }

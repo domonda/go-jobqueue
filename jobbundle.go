@@ -1,6 +1,7 @@
 package jobqueue
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -52,7 +53,7 @@ func (b *JobBundle) String() string {
 // A job will be added for every JobDesc.
 // If a JobDesc.Type is an empty string, then ReflectJobType(JobDesc.Payload) will be used instead.
 // If startAt is not null then the job bundle will not start before that time.
-func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDesc, startAt nullable.Time) (*JobBundle, error) {
+func NewJobBundle(ctx context.Context, jobBundleType, jobBundleOrigin string, jobDescriptions []JobDesc, startAt nullable.Time) (*JobBundle, error) {
 	if len(jobDescriptions) == 0 {
 		return nil, errors.New("no jobDescriptions")
 	}
@@ -64,7 +65,7 @@ func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDe
 		if jobType == "" {
 			jobType = ReflectJobTypeOfPayload(desc.Payload)
 		}
-		job, err := NewJobWithPriority(jobType, desc.Origin, desc.Payload, desc.Priority, startAt)
+		job, err := NewJobWithPriority(uu.NewID(ctx), jobType, desc.Origin, desc.Payload, desc.Priority, startAt)
 		if err != nil {
 			return nil, err
 		}
@@ -72,7 +73,7 @@ func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDe
 	}
 
 	jobBundle := &JobBundle{
-		ID:      uu.IDv4(),
+		ID:      uu.NewID(ctx),
 		Type:    jobBundleType,
 		Origin:  jobBundleOrigin,
 		Jobs:    jobs,
@@ -116,7 +117,7 @@ func NewJobBundle(jobBundleType, jobBundleOrigin string, jobDescriptions []JobDe
 // 	}
 
 // 	jobBundle := &JobBundle{
-// 		ID:     uu.IDv4(),
+// 		ID:     uu.NewID(ctx),
 // 		Type:   jobBundleType,
 // 		Origin: jobBundleOrigin,
 // 		Jobs:   jobs,
