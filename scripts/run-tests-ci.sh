@@ -9,7 +9,7 @@ export $(cat "${project_dir}/.env.example" | xargs)
 "${script_dir}/recreate-db.sh"
 
 status=0
-go test "${project_dir}/tests" || status=1
+go test "${project_dir}/tests" -count 1 || status=1
 
 "${script_dir}/destroy-db.sh"
 
