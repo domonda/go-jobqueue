@@ -77,7 +77,7 @@ func StartThreads(ctx context.Context, numThreads int) error {
 	workerWaitGroup.Add(numThreads)
 	checkJobSignal = make(chan struct{}, 256)
 
-	for i := 0; i < numThreads; i++ {
+	for i := range numThreads {
 		go worker(i)
 	}
 

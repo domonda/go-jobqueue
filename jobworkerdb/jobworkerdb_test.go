@@ -23,55 +23,108 @@ func TestJobExecution(t *testing.T) {
 	ctx := context.Background()
 	setupDBConn(ctx, t)
 
-	t.Run("Job ran successfully", func(t *testing.T) {
+	t.Run("Job stores result on success", func(t *testing.T) {
 		// given
-
 		jobResult := "OK"
-		var job1 jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
+		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
 			return jobResult, nil
 		}
 
-		jobType := "example"
-		jobworker.Register(jobType, job1)
-
-		jobID := uu.IDFrom("fd2ddce4-5d0b-4fca-aae7-30044ce8868d")
-		job, err := jobqueue.NewJob(
-			jobID,
+		jobType := "8005f973-fa09-4159-8fcc-ad166a006c40"
+		jobID := uu.IDFrom("ac86612f-c93b-4589-843f-ab16065b668b")
+		job, waiter := NewRegisteredJobWithWaiter(
+			ctx,
+			t,
+			worker,
 			jobType,
-			"origin",
-			"{}",
-			nullable.TimeNow(),
+			jobID,
 		)
-		require.NoError(t, err)
-
-		err = jobqueue.Add(ctx, job)
-		require.NoError(t, err)
-
-		t.Cleanup(func() { jobqueue.DeleteJob(ctx, jobID) })
-
-		err = jobworker.StartThreads(ctx, 1)
-		require.NoError(t, err)
-
-		t.Cleanup(func() { jobworker.StopThreads(ctx) })
-
-		waiter := &Waiter{
-			Check: func() bool {
-				job, err = jobqueue.GetJob(ctx, jobID)
-				require.NoError(t, err)
-				return job.IsFinished()
-			},
-			Timeout:       time.Second,
-			PollFrequency: 50 * time.Millisecond,
-		}
 
 		// when
-		err = waiter.Wait()
+		err := waiter.Wait()
 		require.NoError(t, err)
 
 		// then
+		job, err = jobqueue.GetJob(ctx, job.ID)
+		require.NoError(t, err)
 		assert.False(t, job.HasError())
 		assert.Equal(t, nullable.JSON(`"`+jobResult+`"`), job.Result)
 	})
+
+	t.Run("Job stores error on failure", func(t *testing.T) {
+		// given
+		jobErr := errors.New("NUCLEAR_MELTDOWN")
+		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
+			return nil, jobErr
+		}
+
+		jobType := "45f0684d-2993-4065-8dd2-f7abf1763ef0"
+		jobID := uu.IDFrom("4ac2792b-a12c-42b5-9a75-60ff316da013")
+		job, waiter := NewRegisteredJobWithWaiter(
+			ctx,
+			t,
+			worker,
+			jobType,
+			jobID,
+		)
+
+		// when
+		err := waiter.Wait()
+		require.NoError(t, err)
+
+		// then
+		job, err = jobqueue.GetJob(ctx, job.ID)
+		require.NoError(t, err)
+		assert.True(t, job.HasError())
+		assert.Equal(t, nullable.NonEmptyString(jobErr.Error()), job.ErrorMsg)
+	})
+}
+
+func NewRegisteredJobWithWaiter(
+	ctx context.Context,
+	t *testing.T,
+	workerFunc jobworker.WorkerFunc,
+	jobType string,
+	jobID uu.ID,
+) (
+	*jobqueue.Job,
+	*Waiter,
+) {
+	t.Helper()
+	jobworker.Register(jobType, workerFunc)
+
+	job, err := jobqueue.NewJob(
+		jobID,
+		jobType,
+		"origin",
+		"{}",
+		nullable.TimeNow(),
+	)
+	require.NoError(t, err)
+
+	err = jobqueue.Add(ctx, job)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { jobqueue.DeleteJob(ctx, jobID) })
+
+	err = jobworker.StartThreads(ctx, 1)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { jobworker.StopThreads(ctx) })
+
+	return job, NewJobWaiter(ctx, t, jobID)
+}
+
+func NewJobWaiter(ctx context.Context, t *testing.T, jobID uu.ID) *Waiter {
+	return &Waiter{
+		Check: func() bool {
+			job, err := jobqueue.GetJob(ctx, jobID)
+			require.NoError(t, err)
+			return job.IsStopped()
+		},
+		Timeout:       time.Second,
+		PollFrequency: 50 * time.Millisecond,
+	}
 }
 
 type Waiter struct {
