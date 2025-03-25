@@ -7,7 +7,8 @@ create table worker.job (
     payload  jsonb not null,
     priority bigint not null,
     origin   text not null check(length(origin) > 0 and length(origin) <= 100),
-    retry_count int not null default 0,
+    max_retry_count int not null default 0,
+    current_retry_count int not null default 0,
 
     start_at   timestamptz, -- If NOT NULL, earliest time to start the job
     started_at timestamptz, -- Time when started working on the job, or NULL when not started

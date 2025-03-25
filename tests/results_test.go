@@ -1,4 +1,4 @@
-package jobworkerdb_test
+package tests
 
 import (
 	"context"
@@ -19,11 +19,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestJobExecution(t *testing.T) {
+func TestSimulateJobs(t *testing.T) {
 	ctx := context.Background()
 	setupDBConn(ctx, t)
 
-	t.Run("Job stores result on success", func(t *testing.T) {
+	t.Run("Job result is being stored on success", func(t *testing.T) {
 		// given
 		jobResult := "OK"
 		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
@@ -32,12 +32,16 @@ func TestJobExecution(t *testing.T) {
 
 		jobType := "8005f973-fa09-4159-8fcc-ad166a006c40"
 		jobID := uu.IDFrom("ac86612f-c93b-4589-843f-ab16065b668b")
+		retryCount := 0
+		var backofStrategy jobworker.ScheduleRetryFunc
 		job, waiter := NewRegisteredJobWithWaiter(
 			ctx,
 			t,
 			worker,
 			jobType,
 			jobID,
+			retryCount,
+			backofStrategy,
 		)
 
 		// when
@@ -51,7 +55,7 @@ func TestJobExecution(t *testing.T) {
 		assert.Equal(t, nullable.JSON(`"`+jobResult+`"`), job.Result)
 	})
 
-	t.Run("Job stores error on failure", func(t *testing.T) {
+	t.Run("Job error is being stored on failure", func(t *testing.T) {
 		// given
 		jobErr := errors.New("NUCLEAR_MELTDOWN")
 		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
@@ -60,12 +64,16 @@ func TestJobExecution(t *testing.T) {
 
 		jobType := "45f0684d-2993-4065-8dd2-f7abf1763ef0"
 		jobID := uu.IDFrom("4ac2792b-a12c-42b5-9a75-60ff316da013")
+		retryCount := 0
+		var backofStrategy jobworker.ScheduleRetryFunc
 		job, waiter := NewRegisteredJobWithWaiter(
 			ctx,
 			t,
 			worker,
 			jobType,
 			jobID,
+			retryCount,
+			backofStrategy,
 		)
 
 		// when
@@ -78,6 +86,79 @@ func TestJobExecution(t *testing.T) {
 		assert.True(t, job.HasError())
 		assert.Equal(t, nullable.NonEmptyString(jobErr.Error()), job.ErrorMsg)
 	})
+
+	t.Run("Job will be retried on failure when retry is configured", func(t *testing.T) {
+		// given
+		jobErr := errors.New("NUCLEAR_MELTDOWN")
+		maxRetryCount := 3
+
+		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
+			if job.CurrentRetryCount >= maxRetryCount {
+				return nil, nil
+			}
+			return nil, jobErr
+		}
+
+		var backoffStrategy jobworker.ScheduleRetryFunc = func(ctx context.Context, job *jobqueue.Job) (time.Time, error) {
+			return time.Now(), nil
+		}
+
+		jobType := "7476c878-eec4-4d0c-9ff5-fea0f3dcaf1c"
+		jobID := uu.IDFrom("54b3c462-6d9b-45cb-8096-2d2f262881e1")
+		job, waiter := NewRegisteredJobWithWaiter(
+			ctx,
+			t,
+			worker,
+			jobType,
+			jobID,
+			maxRetryCount,
+			backoffStrategy,
+		)
+
+		// when
+		err := waiter.Wait()
+		require.NoError(t, err)
+
+		// then
+		job, err = jobqueue.GetJob(ctx, job.ID)
+		require.NoError(t, err)
+		assert.False(t, job.HasError())
+	})
+
+	t.Run("Job fails if all attempts fail", func(t *testing.T) {
+		// given
+		jobErr := errors.New("NUCLEAR_MELTDOWN")
+		maxRetryCount := 3
+
+		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
+			return nil, jobErr
+		}
+
+		var backoffStrategy jobworker.ScheduleRetryFunc = func(ctx context.Context, job *jobqueue.Job) (time.Time, error) {
+			return time.Now(), nil
+		}
+
+		jobType := "3af846f5-bacb-4922-b5e5-8156005bcef2"
+		jobID := uu.IDFrom("8f4ee5f3-6aa6-4a4a-88b5-5c874a901428")
+		job, waiter := NewRegisteredJobWithWaiter(
+			ctx,
+			t,
+			worker,
+			jobType,
+			jobID,
+			maxRetryCount,
+			backoffStrategy,
+		)
+
+		// when
+		err := waiter.Wait()
+		require.NoError(t, err)
+
+		// then
+		job, err = jobqueue.GetJob(ctx, job.ID)
+		require.NoError(t, err)
+		assert.True(t, job.HasError())
+	})
 }
 
 func NewRegisteredJobWithWaiter(
@@ -86,6 +167,8 @@ func NewRegisteredJobWithWaiter(
 	workerFunc jobworker.WorkerFunc,
 	jobType string,
 	jobID uu.ID,
+	retryCount int,
+	scheduleRetry jobworker.ScheduleRetryFunc,
 ) (
 	*jobqueue.Job,
 	*Waiter,
@@ -93,12 +176,17 @@ func NewRegisteredJobWithWaiter(
 	t.Helper()
 	jobworker.Register(jobType, workerFunc)
 
+	if scheduleRetry != nil {
+		jobworker.RegisterScheduleRetry(jobType, scheduleRetry)
+	}
+
 	job, err := jobqueue.NewJob(
 		jobID,
 		jobType,
 		"origin",
 		"{}",
 		nullable.TimeNow(),
+		retryCount,
 	)
 	require.NoError(t, err)
 
@@ -120,7 +208,7 @@ func NewJobWaiter(ctx context.Context, t *testing.T, jobID uu.ID) *Waiter {
 		Check: func() bool {
 			job, err := jobqueue.GetJob(ctx, jobID)
 			require.NoError(t, err)
-			return job.IsStopped()
+			return job.IsFinished()
 		},
 		Timeout:       time.Second,
 		PollFrequency: 50 * time.Millisecond,

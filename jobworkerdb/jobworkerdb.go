@@ -134,6 +134,7 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 				payload,
 				priority,
 				origin,
+				max_retry_count,
 				start_at
 			) VALUES (
 				$1,
@@ -142,7 +143,8 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 				$4,
 				$5,
 				$6,
-				$7
+				$7,
+				$8
 			)`,
 		job.ID,
 		job.BundleID,
@@ -150,6 +152,7 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 		job.Payload,
 		job.Priority,
 		job.Origin,
+		job.MaxRetryCount,
 		job.StartAt,
 	)
 }
@@ -558,7 +561,7 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 
 		err = tx.Exec(
 			`update worker.job
-				set result=$1, stopped_at=now(), updated_at=now()
+				set result=$1, stopped_at=now(), updated_at=now(), error_msg=null, error_data=null
 				where id = $2`,
 			result,
 			jobID,
@@ -614,6 +617,28 @@ func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time
 				updated_at=now()
 			where id = $2`,
 		startAt,
+		jobID,
+	)
+}
+
+func (j *jobworkerDB) ScheduleRetry(ctx context.Context, jobID uu.ID, startAt time.Time, retryCount int) (err error) {
+	defer errs.WrapWithFuncParams(&err, ctx, jobID, startAt)
+
+	if j.closed {
+		return jobqueue.ErrClosed
+	}
+
+	return db.Exec(ctx,
+		`update worker.job
+			set
+				start_at=$1,
+				started_at=null,
+				stopped_at=null,
+				current_retry_count=$2,
+				updated_at=now()
+			where id = $3`,
+		startAt,
+		retryCount,
 		jobID,
 	)
 }

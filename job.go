@@ -34,50 +34,50 @@ type Job struct {
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 }
 
-// IsStarted returns if StartedAt is not null.
-// Valid to call on a nil receiver.
 func (j *Job) IsStarted() bool {
-	if j == nil {
-		return false
-	}
 	return j.StartedAt.IsNotNull()
 }
 
-// IsStopped returns if StoppedAt is not null.
-// Valid to call on a nil receiver.
 func (j *Job) IsStopped() bool {
-	if j == nil {
-		return false
-	}
 	return j.StoppedAt.IsNotNull()
 }
 
-// IsFinished returns if a job has been finished without an error.
-// Valid to call on a nil receiver.
 func (j *Job) IsFinished() bool {
-	return j.IsStopped() && !j.HasError()
+	if !j.IsStopped() {
+		return false
+	}
+	return j.CurrentRetryCount == j.MaxRetryCount || !j.Result.IsNull()
+}
+
+func (j *Job) IsSucceeded() bool {
+	return j.IsFinished() && !j.HasError()
 }
 
 // HasError returns true if the receiver is not nil
 // and has an ErrorMsg.
 // Valid to call on a nil receiver.
 func (j *Job) HasError() bool {
-	return j != nil && j.ErrorMsg.IsNotNull()
+	return j.ErrorMsg.IsNotNull()
 }
 
 // String implements the fmt.Stringer interface.
 // Valid to call on a nil receiver.
 func (j *Job) String() string {
-	if j == nil {
-		return "nil Job"
-	}
 	return fmt.Sprintf("Job %s, type %s, priority %d, created at %s from origin '%s'", j.ID, j.Type, j.Priority, j.CreatedAt, j.Origin)
 }
 
 // NewJobWithPriority creates a Job but does not add it to the queue.
 // The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
 // If startAt is not null then the job will not start before that time.
-func NewJobWithPriority(id uu.ID, jobType, origin string, payload any, priority int64, startAt nullable.Time) (*Job, error) {
+func NewJobWithPriority(
+	id uu.ID,
+	jobType,
+	origin string,
+	payload any,
+	priority int64,
+	startAt nullable.Time,
+	retryCount ...int,
+) (*Job, error) {
 	if jobType == "" {
 		return nil, errors.New("empty jobType")
 	}
@@ -145,14 +145,25 @@ func NewJobWithPriority(id uu.ID, jobType, origin string, payload any, priority 
 		CreatedAt: now,
 	}
 
+	if len(retryCount) > 0 {
+		job.MaxRetryCount = retryCount[0]
+	}
+
 	return job, nil
 }
 
 // NewJob creates a Job but does not add it to the queue.
 // The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
 // If startAt is not null then the job will not start before that time.
-func NewJob(id uu.ID, jobType, origin string, payload any, startAt nullable.Time) (*Job, error) {
-	return NewJobWithPriority(id, jobType, origin, payload, 0, startAt)
+func NewJob(
+	id uu.ID,
+	jobType,
+	origin string,
+	payload any,
+	startAt nullable.Time,
+	retryCount ...int,
+) (*Job, error) {
+	return NewJobWithPriority(id, jobType, origin, payload, 0, startAt, retryCount...)
 }
 
 // NewJobReflectType creates a Job but does not add it to the queue.

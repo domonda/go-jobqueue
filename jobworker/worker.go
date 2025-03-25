@@ -135,7 +135,7 @@ func registerFunc(jobType string, workerFunc any) {
 		payloadVal := reflect.New(payloadType) // JSON unmarshalling always needs a pointer
 		err = job.Payload.UnmarshalTo(payloadVal.Interface())
 		if err != nil {
-			return nil, fmt.Errorf("Error while unmarshalling job payload '%s': %w", job.Payload, err)
+			return nil, fmt.Errorf("error while unmarshalling job payload '%s': %w", job.Payload, err)
 		}
 		if argType.Kind() != reflect.Ptr {
 			payloadVal = payloadVal.Elem()
