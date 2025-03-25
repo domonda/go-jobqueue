@@ -33,7 +33,7 @@ func TestSimulateJobs(t *testing.T) {
 		jobType := "8005f973-fa09-4159-8fcc-ad166a006c40"
 		jobID := uu.IDFrom("ac86612f-c93b-4589-843f-ab16065b668b")
 		retryCount := 0
-		var backofStrategy jobworker.ScheduleRetryFunc
+		var scheduleRetry jobworker.ScheduleRetryFunc
 		job, waiter := NewRegisteredJobWithWaiter(
 			ctx,
 			t,
@@ -41,7 +41,7 @@ func TestSimulateJobs(t *testing.T) {
 			jobType,
 			jobID,
 			retryCount,
-			backofStrategy,
+			scheduleRetry,
 		)
 
 		// when
@@ -65,7 +65,7 @@ func TestSimulateJobs(t *testing.T) {
 		jobType := "45f0684d-2993-4065-8dd2-f7abf1763ef0"
 		jobID := uu.IDFrom("4ac2792b-a12c-42b5-9a75-60ff316da013")
 		retryCount := 0
-		var backofStrategy jobworker.ScheduleRetryFunc
+		var scheduleRetry jobworker.ScheduleRetryFunc
 		job, waiter := NewRegisteredJobWithWaiter(
 			ctx,
 			t,
@@ -73,7 +73,7 @@ func TestSimulateJobs(t *testing.T) {
 			jobType,
 			jobID,
 			retryCount,
-			backofStrategy,
+			scheduleRetry,
 		)
 
 		// when
@@ -99,7 +99,7 @@ func TestSimulateJobs(t *testing.T) {
 			return nil, jobErr
 		}
 
-		var backoffStrategy jobworker.ScheduleRetryFunc = func(ctx context.Context, job *jobqueue.Job) (time.Time, error) {
+		var scheduleRetry jobworker.ScheduleRetryFunc = func(ctx context.Context, job *jobqueue.Job) (time.Time, error) {
 			return time.Now(), nil
 		}
 
@@ -112,7 +112,7 @@ func TestSimulateJobs(t *testing.T) {
 			jobType,
 			jobID,
 			maxRetryCount,
-			backoffStrategy,
+			scheduleRetry,
 		)
 
 		// when
@@ -134,7 +134,7 @@ func TestSimulateJobs(t *testing.T) {
 			return nil, jobErr
 		}
 
-		var backoffStrategy jobworker.ScheduleRetryFunc = func(ctx context.Context, job *jobqueue.Job) (time.Time, error) {
+		var scheduleRetry jobworker.ScheduleRetryFunc = func(ctx context.Context, job *jobqueue.Job) (time.Time, error) {
 			return time.Now(), nil
 		}
 
@@ -147,7 +147,7 @@ func TestSimulateJobs(t *testing.T) {
 			jobType,
 			jobID,
 			maxRetryCount,
-			backoffStrategy,
+			scheduleRetry,
 		)
 
 		// when
