@@ -7,6 +7,7 @@ create table worker.job (
     payload  jsonb not null,
     priority bigint not null,
     origin   text not null check(length(origin) > 0 and length(origin) <= 100),
+    retry_count int not null default 0,
 
     start_at   timestamptz, -- If NOT NULL, earliest time to start the job
     started_at timestamptz, -- Time when started working on the job, or NULL when not started
@@ -19,8 +20,8 @@ create table worker.job (
     error_data jsonb, -- Optional error metadata
 	result     jsonb, -- Result if the job returned one
 
-    updated_at timestamptz not null,
-    created_at timestamptz not null
+    updated_at timestamptz not null default current_timestamp,
+    created_at timestamptz not null default current_timestamp
 );
 
 comment on table worker.job IS 'A `Job` to be worked out later.';

@@ -14,7 +14,7 @@ var (
 	numRunningThreads int
 
 	workerWaitGroup *sync.WaitGroup
-	workers         = make(map[string]Worker)
+	workers         = make(map[string]WorkerFunc)
 	workersMtx      sync.RWMutex
 
 	// checkJobSignal is a dummy signal notifying the thread workers that there is a new job available

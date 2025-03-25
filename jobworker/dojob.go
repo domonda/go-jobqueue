@@ -40,7 +40,7 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	}
 
 	jobCtx := golog.ContextWithAttribs(ctx, golog.UUID{Key: "jobID", Val: job.ID})
-	result, jobErr := worker.DoJob(jobCtx, job)
+	result, jobErr := worker(jobCtx, job)
 	if jobErr != nil {
 		errorTitle := errs.Root(jobErr).Error()
 		if nl := strings.IndexByte(errorTitle, '\n'); nl > 0 {
