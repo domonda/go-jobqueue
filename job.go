@@ -63,7 +63,7 @@ func (j *Job) HasError() bool {
 // String implements the fmt.Stringer interface.
 // Valid to call on a nil receiver.
 func (j *Job) String() string {
-	return fmt.Sprintf("Job %s, type %s, priority %d, created at %s from origin '%s'", j.ID, j.Type, j.Priority, j.CreatedAt, j.Origin)
+	return fmt.Sprintf("Job %s, type %s, priority %d, created at %s from origin '%s' max retry count %d current retry count %d", j.ID, j.Type, j.Priority, j.CreatedAt, j.Origin, j.MaxRetryCount, j.CurrentRetryCount)
 }
 
 // NewJobWithPriority creates a Job but does not add it to the queue.
