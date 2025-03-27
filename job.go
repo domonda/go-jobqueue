@@ -18,10 +18,10 @@ type Job struct {
 	Type              string        `db:"type"     json:"type"` // CHECK(length("type") > 0 AND length("type") <= 100)
 	Payload           notnull.JSON  `db:"payload"  json:"payload"`
 	Priority          int64         `db:"priority" json:"priority"`
-	Origin            string        `db:"origin"   json:"origin"`  // CHECK(length(origin) > 0 AND length(origin) <= 100)
-	StartAt           nullable.Time `db:"start_at" json:"startAt"` // If not NULL, earliest time to start the job
+	Origin            string        `db:"origin"   json:"origin"` // CHECK(length(origin) > 0 AND length(origin) <= 100)
 	MaxRetryCount     int           `db:"max_retry_count"   json:"maxRetryCount"`
 	CurrentRetryCount int           `db:"current_retry_count"   json:"currentRetryCount"`
+	StartAt           nullable.Time `db:"start_at" json:"startAt"` // If not NULL, earliest time to start the job
 
 	StartedAt nullable.Time `db:"started_at" json:"startedAt"` // Time when started working on the job, or NULL when not started
 	StoppedAt nullable.Time `db:"stopped_at" json:"stoppedAt"` // Time when working on job was stoped because of a decision question or an error, or NULL
@@ -34,22 +34,22 @@ type Job struct {
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 }
 
-func (j *Job) IsStarted() bool {
+func (j *Job) Started() bool {
 	return j.StartedAt.IsNotNull()
 }
 
-func (j *Job) IsStopped() bool {
+func (j *Job) Stopped() bool {
 	return j.StoppedAt.IsNotNull()
 }
 
 func (j *Job) IsFinished() bool {
-	if !j.IsStopped() {
+	if !j.Stopped() {
 		return false
 	}
-	return j.CurrentRetryCount == j.MaxRetryCount || !j.Result.IsNull()
+	return j.CurrentRetryCount >= j.MaxRetryCount || !j.Result.IsNull()
 }
 
-func (j *Job) IsSucceeded() bool {
+func (j *Job) Succeeded() bool {
 	return j.IsFinished() && !j.HasError()
 }
 

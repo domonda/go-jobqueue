@@ -157,7 +157,7 @@ func TestSimulateJobs(t *testing.T) {
 		// then
 		job, err = jobqueue.GetJob(ctx, job.ID)
 		require.NoError(t, err)
-		assert.True(t, job.HasError())
+		assert.Equal(t, nullable.NonEmptyString(jobErr.Error()), job.ErrorMsg)
 	})
 }
 
