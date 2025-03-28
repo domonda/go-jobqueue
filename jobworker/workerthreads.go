@@ -9,13 +9,17 @@ import (
 	"github.com/domonda/go-jobqueue"
 )
 
+type JobType = string
+
 var (
 	// numRunningThreads represents the number of currently running threads
 	numRunningThreads int
 
-	workerWaitGroup *sync.WaitGroup
-	workers         = make(map[string]Worker)
-	workersMtx      sync.RWMutex
+	workerWaitGroup    *sync.WaitGroup
+	workers            = map[JobType]WorkerFunc{}
+	retrySchedulers    = map[JobType]ScheduleRetryFunc{}
+	workersMtx         sync.RWMutex
+	retrySchedulersMtx sync.RWMutex
 
 	// checkJobSignal is a dummy signal notifying the thread workers that there is a new job available
 	checkJobSignal chan struct{}
@@ -77,7 +81,7 @@ func StartThreads(ctx context.Context, numThreads int) error {
 	workerWaitGroup.Add(numThreads)
 	checkJobSignal = make(chan struct{}, 256)
 
-	for i := 0; i < numThreads; i++ {
+	for i := range numThreads {
 		go worker(i)
 	}
 

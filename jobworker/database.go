@@ -26,15 +26,13 @@ type DataBase interface {
 	SetJobResult(ctx context.Context, jobID uu.ID, result nullable.JSON) error
 	SetJobStart(ctx context.Context, jobID uu.ID, startAt time.Time) error
 
+	ScheduleRetry(ctx context.Context, jobID uu.ID, startAt time.Time, retryCount int) error
+
 	DeleteJobsFromOrigin(ctx context.Context, origin string) error
 	DeleteJobsOfType(ctx context.Context, jobType string) error
 	DeleteJobBundlesFromOrigin(ctx context.Context, origin string) error
 	DeleteJobBundlesOfType(ctx context.Context, bundleType string) error
 	DeleteAllJobsAndBundles(ctx context.Context) error
-
-	// CompletedJobBundleOrNil(jobBundleID uu.ID) (*jobqueue.JobBundle, error)
-	// GetJobResult(jobID uu.ID) (nullable.JSON, error)
-	// SetJobIssue(jobID uu.ID, issueType string, issueData nullable.JSON) error
 }
 
 func DeleteAllJobsAndBundles(ctx context.Context) error {
