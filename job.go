@@ -15,11 +15,13 @@ type Job struct {
 	ID       uu.ID         `db:"id"        json:"id"`
 	BundleID uu.NullableID `db:"bundle_id" json:"bundleId"`
 
-	Type     string        `db:"type"     json:"type"` // CHECK(length("type") > 0 AND length("type") <= 100)
-	Payload  notnull.JSON  `db:"payload"  json:"payload"`
-	Priority int64         `db:"priority" json:"priority"`
-	Origin   string        `db:"origin"   json:"origin"`  // CHECK(length(origin) > 0 AND length(origin) <= 100)
-	StartAt  nullable.Time `db:"start_at" json:"startAt"` // If not NULL, earliest time to start the job
+	Type              string        `db:"type"     json:"type"` // CHECK(length("type") > 0 AND length("type") <= 100)
+	Payload           notnull.JSON  `db:"payload"  json:"payload"`
+	Priority          int64         `db:"priority" json:"priority"`
+	Origin            string        `db:"origin"   json:"origin"`  // CHECK(length(origin) > 0 AND length(origin) <= 100)
+	StartAt           nullable.Time `db:"start_at" json:"startAt"` // If not NULL, earliest time to start the job
+	MaxRetryCount     int           `db:"max_retry_count"   json:"maxRetryCount"`
+	CurrentRetryCount int           `db:"current_retry_count"   json:"currentRetryCount"`
 
 	StartedAt nullable.Time `db:"started_at" json:"startedAt"` // Time when started working on the job, or NULL when not started
 	StoppedAt nullable.Time `db:"stopped_at" json:"stoppedAt"` // Time when working on job was stoped because of a decision question or an error, or NULL
