@@ -40,7 +40,7 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	}
 
 	jobCtx := golog.ContextWithAttribs(ctx, golog.UUID{Key: "jobID", Val: job.ID})
-	result, jobErr := worker.DoJob(jobCtx, job)
+	result, jobErr := worker(jobCtx, job)
 	if jobErr != nil {
 		errorTitle := errs.Root(jobErr).Error()
 		if nl := strings.IndexByte(errorTitle, '\n'); nl > 0 {
@@ -66,26 +66,67 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 
 func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, job)
-
 	err = DoJob(ctx, job)
-	if err != nil {
-		// job.ErrorMsg might be null if DoJob returns an error
-		// that was not returned from the jobworker but from
-		// some other job-queue logic error,
-		errorMsg := job.ErrorMsg.StringOr(err.Error())
-		e := db.SetJobError(ctx, job.ID, errorMsg, job.ErrorData)
-		if e != nil {
-			OnError(e)
-			log.ErrorCtx(ctx, "Error while updating job error in the database").
-				UUID("jobID", job.ID).
-				Any("job", job).
-				Err(e).
-				Log()
-			return e
-		}
-		// Return no error because it was saved in the database
-		return nil
+
+	if err == nil {
+		return db.SetJobResult(ctx, job.ID, job.Result)
 	}
 
-	return db.SetJobResult(ctx, job.ID, job.Result)
+	// job.ErrorMsg might be null if DoJob returns an error
+	// that was not returned from the jobworker but from
+	// some other job-queue logic error,
+	errorMsg := job.ErrorMsg.StringOr(err.Error())
+	err = db.SetJobError(ctx, job.ID, errorMsg, job.ErrorData)
+
+	if err != nil {
+		OnError(err)
+		log.ErrorCtx(ctx, "Error while updating job error in the database").
+			UUID("jobID", job.ID).
+			Any("job", job).
+			Err(err).
+			Log()
+		return err
+	}
+
+	if job.CurrentRetryCount >= job.MaxRetryCount {
+		return err
+	}
+
+	scheduleRetry, ok := retrySchedulers[job.Type]
+
+	if !ok {
+		err = errs.New("Retry scheduler doesn't exist for job")
+		OnError(err)
+		log.ErrorCtx(ctx, "Retry scheduler doesn't exist for job").
+			UUID("jobID", job.ID).
+			Any("job", job).
+			Err(err).
+			Log()
+		return err
+	}
+
+	nextStart, err := scheduleRetry(ctx, job)
+
+	if err != nil {
+		OnError(err)
+		log.ErrorCtx(ctx, "Retry scheduler returned an error").
+			UUID("jobID", job.ID).
+			Any("job", job).
+			Err(err).
+			Log()
+		return err
+	}
+
+	if err := db.ScheduleRetry(ctx, job.ID, nextStart, job.CurrentRetryCount+1); err != nil {
+		OnError(err)
+		log.ErrorCtx(ctx, "Could not schedule retry for job").
+			UUID("jobID", job.ID).
+			Any("job", job).
+			Err(err).
+			Log()
+
+		return err
+	}
+
+	return err
 }

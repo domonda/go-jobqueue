@@ -11,19 +11,11 @@ import (
 	"github.com/domonda/go-types/notnull"
 )
 
-type Worker interface {
-	DoJob(ctx context.Context, job *jobqueue.Job) (result any, err error)
-}
-
 type WorkerFunc func(ctx context.Context, job *jobqueue.Job) (result any, err error)
-
-func (f WorkerFunc) DoJob(ctx context.Context, job *jobqueue.Job) (result any, err error) {
-	return f(ctx, job)
-}
 
 // Register a Worker implementation for a jobType.
 // See also RegisterFunc
-func Register(jobType string, worker Worker) {
+func Register(jobType string, worker WorkerFunc) {
 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobType)
 
 	workersMtx.Lock()
@@ -143,7 +135,7 @@ func registerFunc(jobType string, workerFunc any) {
 		payloadVal := reflect.New(payloadType) // JSON unmarshalling always needs a pointer
 		err = job.Payload.UnmarshalTo(payloadVal.Interface())
 		if err != nil {
-			return nil, fmt.Errorf("Error while unmarshalling job payload '%s': %w", job.Payload, err)
+			return nil, fmt.Errorf("error while unmarshalling job payload '%s': %w", job.Payload, err)
 		}
 		if argType.Kind() != reflect.Ptr {
 			payloadVal = payloadVal.Elem()
