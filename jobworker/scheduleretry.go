@@ -10,7 +10,7 @@ import (
 
 type ScheduleRetryFunc func(ctx context.Context, job *jobqueue.Job) (nextStart time.Time, err error)
 
-func RegisterScheduleRetry(jobType JobType, strategy ScheduleRetryFunc) {
+func RegisterScheduleRetry(jobType JobType, scheduleFunc ScheduleRetryFunc) {
 	retrySchedulersMtx.Lock()
 	defer retrySchedulersMtx.Unlock()
 
@@ -18,5 +18,5 @@ func RegisterScheduleRetry(jobType JobType, strategy ScheduleRetryFunc) {
 		panic(fmt.Errorf("retry scheduler for job type '%s' already exists", jobType))
 	}
 
-	retrySchedulers[jobType] = strategy
+	retrySchedulers[jobType] = scheduleFunc
 }
