@@ -39,7 +39,7 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 		return errs.Errorf("no worker for job of type '%s'", job.Type)
 	}
 
-	jobCtx := golog.ContextWithAttribs(ctx, golog.UUID{Key: "jobID", Val: job.ID})
+	jobCtx := golog.ContextWithAttribs(ctx, golog.NewUUID("jobID", job.ID))
 	result, jobErr := worker(jobCtx, job)
 	if jobErr != nil {
 		errorTitle := errs.Root(jobErr).Error()
