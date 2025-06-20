@@ -8,7 +8,7 @@ require (
 	github.com/domonda/go-sqldb v0.0.0-20250526131900-d60a57e937c5
 	github.com/domonda/go-sqldb/pqconn v0.0.0-20250526131900-d60a57e937c5
 	github.com/domonda/go-types v0.0.0-20250610070846-52067ab2d5ab
-	github.com/domonda/golog v0.0.0-20250603150255-55b9f91d8f7d
+	github.com/domonda/golog v0.0.0-20250620142312-a23446a321e4
 	github.com/stretchr/testify v1.10.0
 )
 

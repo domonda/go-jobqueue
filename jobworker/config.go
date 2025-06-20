@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	log = rootlog.NewPackageLogger("jobworker")
+	log = rootlog.NewPackageLogger()
 
 	// OnError will be called for every error that
 	// would also be logged.

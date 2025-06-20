@@ -8,7 +8,7 @@ import (
 	rootlog "github.com/domonda/golog/log"
 )
 
-var log = rootlog.NewPackageLogger("jobworkerdb")
+var log = rootlog.NewPackageLogger()
 
 func InitJobQueue(ctx context.Context) error {
 	db := &jobworkerDB{}
