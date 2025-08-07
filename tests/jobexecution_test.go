@@ -55,6 +55,33 @@ func TestSimulateJobs(t *testing.T) {
 		assert.Equal(t, nullable.JSON(`"`+jobResult+`"`), job.Result)
 	})
 
+	t.Run("Job finishes before max retry count", func(t *testing.T) {
+		// given
+		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
+			return nil, nil
+		}
+
+		jobType := "c7cd81f1-61de-43c4-84f4-8c1a368e6f32"
+		jobID := uu.IDFrom("125703f6-396d-447c-9286-facd91de44a7")
+		retryCount := 1
+		var scheduleRetry jobworker.ScheduleRetryFunc
+		_, waiter := NewRegisteredJobWithWaiter(
+			ctx,
+			t,
+			worker,
+			jobType,
+			jobID,
+			retryCount,
+			scheduleRetry,
+		)
+
+		// when
+		err := waiter.Wait()
+
+		// then
+		require.NoError(t, err)
+	})
+
 	t.Run("Job error is being stored on failure", func(t *testing.T) {
 		// given
 		jobErr := errors.New("NUCLEAR_MELTDOWN")
@@ -174,6 +201,7 @@ func NewRegisteredJobWithWaiter(
 	*Waiter,
 ) {
 	t.Helper()
+
 	jobworker.Register(jobType, workerFunc)
 
 	if scheduleRetry != nil {
@@ -204,6 +232,8 @@ func NewRegisteredJobWithWaiter(
 }
 
 func NewJobWaiter(ctx context.Context, t *testing.T, jobID uu.ID) *Waiter {
+	t.Helper()
+
 	return &Waiter{
 		Check: func() bool {
 			job, err := jobqueue.GetJob(ctx, jobID)
@@ -237,17 +267,18 @@ func (w *Waiter) Wait() error {
 
 func setupDBConn(ctx context.Context, t *testing.T) {
 	t.Helper()
-	conn := pqconn.MustNew(ctx, dbConfigFromEnv())
+
+	conn := pqconn.MustNew(ctx, dbConfigFromEnv(t))
 	db.SetConn(conn)
 	err := jobworkerdb.InitJobQueue(ctx)
 	require.NoError(t, err)
 }
 
-func dbConfigFromEnv() *sqldb.Config {
+func dbConfigFromEnv(t *testing.T) *sqldb.Config {
+	t.Helper()
+
 	config, err := loadEnv()
-	if err != nil {
-		panic(err)
-	}
+	require.NoError(t, err)
 
 	return &sqldb.Config{
 		Driver:   "postgres",

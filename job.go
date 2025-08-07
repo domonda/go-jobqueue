@@ -46,7 +46,7 @@ func (j *Job) IsFinished() bool {
 	if !j.Stopped() {
 		return false
 	}
-	return j.CurrentRetryCount >= j.MaxRetryCount || !j.Result.IsNull()
+	return j.CurrentRetryCount >= j.MaxRetryCount || j.ErrorMsg.IsNull()
 }
 
 func (j *Job) Succeeded() bool {
