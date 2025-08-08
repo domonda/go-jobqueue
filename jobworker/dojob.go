@@ -50,10 +50,18 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 		errorTitle = strings.TrimSpace(errorTitle)
 
 		OnError(jobErr)
-		log.ErrorfCtx(jobCtx, "Job error: %s", errorTitle).
-			Any("job", job).
-			Err(jobErr).
-			Log()
+
+		if job.CurrentRetryCount >= job.MaxRetryCount {
+			log.ErrorfCtx(jobCtx, "Job error: %s", errorTitle).
+				Any("job", job).
+				Err(jobErr).
+				Log()
+		} else {
+			log.WarnfCtx(jobCtx, "Job error: %s", errorTitle).
+				Any("job", job).
+				Err(jobErr).
+				Log()
+		}
 
 		job.ErrorMsg.Set(jobErr.Error())
 		job.ErrorData, err = nullable.MarshalJSON(result)

@@ -1,8 +1,11 @@
 package tests
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/domonda/go-sqldb/pqconn"
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
+	"github.com/domonda/golog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,6 +57,33 @@ func TestSimulateJobs(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, job.HasError())
 		assert.Equal(t, nullable.JSON(`"`+jobResult+`"`), job.Result)
+	})
+
+	t.Run("Job finishes before max retry count", func(t *testing.T) {
+		// given
+		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
+			return nil, nil
+		}
+
+		jobType := "c7cd81f1-61de-43c4-84f4-8c1a368e6f32"
+		jobID := uu.IDFrom("125703f6-396d-447c-9286-facd91de44a7")
+		retryCount := 1
+		var scheduleRetry jobworker.ScheduleRetryFunc
+		_, waiter := NewRegisteredJobWithWaiter(
+			ctx,
+			t,
+			worker,
+			jobType,
+			jobID,
+			retryCount,
+			scheduleRetry,
+		)
+
+		// when
+		err := waiter.Wait()
+
+		// then
+		require.NoError(t, err)
 	})
 
 	t.Run("Job error is being stored on failure", func(t *testing.T) {
@@ -159,6 +190,131 @@ func TestSimulateJobs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, nullable.NonEmptyString(jobErr.Error()), job.ErrorMsg)
 	})
+
+	t.Run("Logs warning if error happens not in last retry", func(t *testing.T) {
+		// given
+		jobErr := errors.New("NUCLEAR_MELTDOWN")
+		maxRetryCount := 1
+		writer := &bytes.Buffer{}
+		logConfig := golog.NewConfig(
+			&golog.DefaultLevels,
+			golog.AllLevelsActive,
+			golog.NewJSONWriterConfig(writer, golog.NewDefaultFormat()),
+		)
+		jobworker.OverrideLogger(golog.NewLogger(logConfig))
+
+		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
+			if job.CurrentRetryCount == 0 {
+				return nil, jobErr
+			}
+			return nil, nil
+		}
+
+		var scheduleRetry jobworker.ScheduleRetryFunc = func(ctx context.Context, job *jobqueue.Job) (time.Time, error) {
+			return time.Now(), nil
+		}
+
+		jobType := "3801a227-6e26-4040-add5-89bad4dc9b7b"
+		jobID := uu.IDFrom("3653ca42-618f-4ba0-b529-d6e415627305")
+		_, waiter := NewRegisteredJobWithWaiter(
+			ctx,
+			t,
+			worker,
+			jobType,
+			jobID,
+			maxRetryCount,
+			scheduleRetry,
+		)
+
+		// when
+		err := waiter.Wait()
+		require.NoError(t, err)
+
+		// then
+		rawLogData := writer.String()
+		logRecords := strings.SplitSeq(rawLogData, "\n")
+		warningFound := false
+		for logRecord := range logRecords {
+			if logRecord == "" {
+				continue
+			}
+
+			parsedLogRecord := &PartialLogRecord{}
+			err := json.Unmarshal([]byte(logRecord), parsedLogRecord)
+			require.NoError(t, err)
+			assert.NotEqual(t, "ERROR", parsedLogRecord.Level)
+
+			if parsedLogRecord.Level == "WARN" {
+				warningFound = true
+				assert.True(t, strings.Contains(parsedLogRecord.Message, "Job error"))
+			}
+		}
+
+		assert.True(t, warningFound)
+	})
+
+	t.Run("Logs error if error happens in last retry", func(t *testing.T) {
+		// given
+		jobErr := errors.New("NUCLEAR_MELTDOWN")
+		maxRetryCount := 1
+		writer := &bytes.Buffer{}
+		logConfig := golog.NewConfig(
+			&golog.DefaultLevels,
+			golog.AllLevelsActive,
+			golog.NewJSONWriterConfig(writer, golog.NewDefaultFormat()),
+		)
+		jobworker.OverrideLogger(golog.NewLogger(logConfig))
+
+		var worker jobworker.WorkerFunc = func(ctx context.Context, job *jobqueue.Job) (result any, err error) {
+			return nil, jobErr
+		}
+
+		var scheduleRetry jobworker.ScheduleRetryFunc = func(ctx context.Context, job *jobqueue.Job) (time.Time, error) {
+			return time.Now(), nil
+		}
+
+		jobType := "e7e4da66-c5ce-4389-be48-0d520e2c7518"
+		jobID := uu.IDFrom("0de33f26-57a5-48e0-ae64-a51c218bc50e")
+		_, waiter := NewRegisteredJobWithWaiter(
+			ctx,
+			t,
+			worker,
+			jobType,
+			jobID,
+			maxRetryCount,
+			scheduleRetry,
+		)
+
+		// when
+		err := waiter.Wait()
+		require.NoError(t, err)
+
+		// then
+		rawLogData := writer.String()
+		logRecords := strings.SplitSeq(rawLogData, "\n")
+		errorFound := false
+		for logRecord := range logRecords {
+			if logRecord == "" {
+				continue
+			}
+
+			parsedLogRecord := &PartialLogRecord{}
+			err := json.Unmarshal([]byte(logRecord), parsedLogRecord)
+			require.NoError(t, err)
+
+			if parsedLogRecord.Level == "ERROR" {
+				errorFound = true
+				assert.True(t, strings.Contains(parsedLogRecord.Message, "Job error"))
+			}
+		}
+
+		assert.True(t, errorFound)
+	})
+}
+
+type PartialLogRecord struct {
+	Level   string `json:"level"`
+	Message string `json:"message"`
 }
 
 func NewRegisteredJobWithWaiter(
@@ -174,6 +330,7 @@ func NewRegisteredJobWithWaiter(
 	*Waiter,
 ) {
 	t.Helper()
+
 	jobworker.Register(jobType, workerFunc)
 
 	if scheduleRetry != nil {
@@ -204,6 +361,8 @@ func NewRegisteredJobWithWaiter(
 }
 
 func NewJobWaiter(ctx context.Context, t *testing.T, jobID uu.ID) *Waiter {
+	t.Helper()
+
 	return &Waiter{
 		Check: func() bool {
 			job, err := jobqueue.GetJob(ctx, jobID)
@@ -237,17 +396,18 @@ func (w *Waiter) Wait() error {
 
 func setupDBConn(ctx context.Context, t *testing.T) {
 	t.Helper()
-	conn := pqconn.MustNew(ctx, dbConfigFromEnv())
+
+	conn := pqconn.MustNew(ctx, dbConfigFromEnv(t))
 	db.SetConn(conn)
 	err := jobworkerdb.InitJobQueue(ctx)
 	require.NoError(t, err)
 }
 
-func dbConfigFromEnv() *sqldb.Config {
+func dbConfigFromEnv(t *testing.T) *sqldb.Config {
+	t.Helper()
+
 	config, err := loadEnv()
-	if err != nil {
-		panic(err)
-	}
+	require.NoError(t, err)
 
 	return &sqldb.Config{
 		Driver:   "postgres",
