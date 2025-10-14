@@ -7,6 +7,7 @@ import (
 
 	"github.com/domonda/go-errs"
 	"github.com/domonda/go-jobqueue"
+	"github.com/domonda/go-sqldb"
 	"github.com/domonda/go-types"
 	"github.com/domonda/go-types/notnull"
 )
@@ -17,6 +18,10 @@ type WorkerFunc func(ctx context.Context, job *jobqueue.Job) (result any, err er
 // See also RegisterFunc
 func Register(jobType string, worker WorkerFunc) {
 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobType)
+
+	if sqlInject, info := sqldb.IsSQLInjection(jobType); sqlInject {
+		panic(fmt.Errorf("jobType %#v contains probably SQL injection: %s", jobType, info))
+	}
 
 	workersMtx.Lock()
 	defer workersMtx.Unlock()
