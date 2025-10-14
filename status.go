@@ -4,8 +4,11 @@ import (
 	"fmt"
 )
 
+// Status represents the current state of the job queue.
 type Status struct {
-	NumJobs       int
+	// NumJobs is the total number of jobs in the queue.
+	NumJobs int
+	// NumJobBundles is the total number of job bundles in the queue.
 	NumJobBundles int
 	// NumWorkerThreads int
 }

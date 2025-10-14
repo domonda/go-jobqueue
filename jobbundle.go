@@ -10,18 +10,32 @@ import (
 	"github.com/domonda/go-types/uu"
 )
 
+// JobBundle represents a group of related jobs that are tracked together.
+// The bundle provides a way to wait for completion of all jobs and receive
+// a single notification when all jobs are finished.
 type JobBundle struct {
+	// ID is the unique identifier for the job bundle.
 	ID uu.ID `db:"id,pk" json:"id"`
 
-	Type   string `db:"type"   json:"type"`   // CHECK(length("type") > 0)
+	// Type categorizes the job bundle for filtering and identification.
+	Type string `db:"type" json:"type"` // CHECK(length("type") > 0)
+
+	// Origin identifies the source or context that created the bundle.
 	Origin string `db:"origin" json:"origin"` // CHECK(length(origin) > 0)
 
-	NumJobs        int `db:"num_jobs"         json:"num_jobs"`
+	// NumJobs is the total number of jobs in the bundle.
+	NumJobs int `db:"num_jobs" json:"num_jobs"`
+
+	// NumJobsStopped tracks how many jobs have completed (successfully or with errors).
 	NumJobsStopped int `db:"num_jobs_stopped" json:"num_jobs_stopped"`
 
+	// UpdatedAt is the last time the bundle was modified.
 	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
+
+	// CreatedAt is when the bundle was created.
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 
+	// Jobs contains the individual jobs in the bundle. This field is not stored in the database.
 	Jobs []*Job `db:"-" json:"jobs,omitempty"`
 }
 
@@ -49,10 +63,11 @@ func (b *JobBundle) String() string {
 	return fmt.Sprintf("JobBundle %s, type %s, created at %s from origin '%s'", b.ID, b.Type, b.CreatedAt, b.Origin)
 }
 
-// NewJobBundle xxxx TODO adds a job bundle of jobBundleType from jobBundleOrigin.
-// A job will be added for every JobDesc.
-// If a JobDesc.Type is an empty string, then ReflectJobType(JobDesc.Payload) will be used instead.
-// If startAt is not null then the job bundle will not start before that time.
+// NewJobBundle creates a new job bundle with the specified type and origin.
+// A job will be created for every JobDesc in the jobDescriptions slice.
+// If a JobDesc.Type is an empty string, ReflectJobTypeOfPayload will be used to determine the type.
+// If startAt is not null, none of the jobs in the bundle will start before that time.
+// Returns an error if jobDescriptions is empty or if any job creation fails.
 func NewJobBundle(ctx context.Context, jobBundleType, jobBundleOrigin string, jobDescriptions []JobDesc, startAt nullable.Time) (*JobBundle, error) {
 	if len(jobDescriptions) == 0 {
 		return nil, errors.New("no jobDescriptions")
