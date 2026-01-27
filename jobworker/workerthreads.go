@@ -12,22 +12,34 @@ import (
 type JobType = string
 
 var (
-	// numRunningThreads represents the number of currently running threads
+	// setupMtx guards numRunningThreads, workerWaitGroup, and checkJobSignal
+	setupMtx sync.RWMutex
+
 	numRunningThreads int
-
-	workerWaitGroup    *sync.WaitGroup
-	workers            = map[JobType]WorkerFunc{}
-	retrySchedulers    = map[JobType]ScheduleRetryFunc{}
-	workersMtx         sync.RWMutex
-	retrySchedulersMtx sync.RWMutex
-
+	workerWaitGroup   *sync.WaitGroup
 	// checkJobSignal is a dummy signal notifying the thread workers that there is a new job available
 	checkJobSignal chan struct{}
+
+	workers    = map[JobType]WorkerFunc{}
+	workersMtx sync.RWMutex
+
+	retrySchedulers    = map[JobType]ScheduleRetryFunc{}
+	retrySchedulersMtx sync.RWMutex
 )
 
 func onCheckJob() {
-	if numRunningThreads > 0 && checkJobSignal != nil {
-		checkJobSignal <- struct{}{}
+	setupMtx.RLock()
+	defer setupMtx.RUnlock()
+
+	if numRunningThreads == 0 || checkJobSignal == nil {
+		return
+	}
+
+	// Non-blocking send to avoid blocking while holding the lock.
+	// If the buffer is full, there's already a pending signal.
+	select {
+	case checkJobSignal <- struct{}{}:
+	default:
 	}
 }
 
@@ -67,6 +79,10 @@ func StartThreads(ctx context.Context, numThreads int) error {
 	if numThreads <= 0 {
 		return errors.New("need at least 1 worker thread")
 	}
+
+	setupMtx.Lock()
+	defer setupMtx.Unlock()
+
 	if numRunningThreads > 0 {
 		return errors.New("worker threads already running")
 	}
@@ -79,7 +95,7 @@ func StartThreads(ctx context.Context, numThreads int) error {
 	numRunningThreads = numThreads
 	workerWaitGroup = new(sync.WaitGroup)
 	workerWaitGroup.Add(numThreads)
-	checkJobSignal = make(chan struct{}, 256)
+	checkJobSignal = make(chan struct{}, 1024)
 
 	for i := range numThreads {
 		go worker(i)
@@ -115,15 +131,15 @@ func worker(threadIndex int) {
 		Int("threadIndex", threadIndex).
 		SubLoggerContext(ctx)
 
-	log.Debug("starting the worker thread").Log()
+	log.Debug("Starting the worker thread").Log()
 
-	defer log.Debug("worker thread ended").Log()
+	defer log.Debug("Worker thread ended").Log()
 
 	for job := nextJob(ctx); job != nil; job = nextJob(ctx) {
 		err := doJobAndSaveResultInDB(ctx, job)
 		if err != nil {
 			OnError(err)
-			log.ErrorCtx(ctx, "error while dispatching the job").
+			log.ErrorCtx(ctx, "Error while dispatching the job").
 				Err(err).
 				Any("job", job).
 				Log()
@@ -135,35 +151,52 @@ func worker(threadIndex int) {
 // finished their current jobs and stops them before they start
 // working on new jobs.
 func FinishThreads() {
-	log.Debug("finishing threads").Log()
+	log.Debug("Finishing threads").Log()
+
+	setupMtx.Lock()
+	defer setupMtx.Unlock()
 
 	if numRunningThreads == 0 {
 		return
 	}
 
-	StopThreads(context.TODO())
+	// Inline stopThreadsLocked logic
+	numRunningThreads = 0
 
+	err := db.SetJobAvailableListener(context.TODO(), nil)
+	if err != nil {
+		OnError(err)
+		log.Error("Error while setting the job available listener to nil").Err(err).Log()
+	}
+
+	close(checkJobSignal)
+
+	// Wait for workers to finish while holding the lock.
+	// This is safe because workers don't acquire setupMtx.
 	workerWaitGroup.Wait()
 	workerWaitGroup = nil
 	checkJobSignal = nil
 
-	log.Info("threads have finished").Log()
+	log.Info("Threads have finished").Log()
 }
 
 // StopThreads stops the threads listening for new jobs.
+// Use FinishThreads to also wait for workers to complete.
 func StopThreads(ctx context.Context) {
-	log.Debug("stopping threads").Log()
+	log.Debug("Stopping threads").Log()
+
+	setupMtx.Lock()
+	defer setupMtx.Unlock()
 
 	if numRunningThreads == 0 {
 		return
 	}
-
 	numRunningThreads = 0
 
 	err := db.SetJobAvailableListener(ctx, nil)
 	if err != nil {
 		OnError(err)
-		log.ErrorCtx(ctx, "error while setting the job available listener").Err(err).Log()
+		log.ErrorCtx(ctx, "Error while setting the job available listener to nil").Err(err).Log()
 	}
 
 	close(checkJobSignal)
