@@ -12,13 +12,15 @@ import (
 type JobType = string
 
 var (
-	// setupMtx guards numRunningThreads, workerWaitGroup, and checkJobSignal
+	// setupMtx guards numRunningThreads, workerWaitGroup, checkJobSignal, and stopPolling
 	setupMtx sync.RWMutex
 
 	numRunningThreads int
 	workerWaitGroup   *sync.WaitGroup
 	// checkJobSignal is a dummy signal notifying the thread workers that there is a new job available
 	checkJobSignal chan struct{}
+	// stopPolling is closed to signal the polling goroutine to stop
+	stopPolling chan struct{}
 
 	workers    = map[JobType]WorkerFunc{}
 	workersMtx sync.RWMutex
@@ -52,6 +54,14 @@ func StartPollingAvailableJobs(interval time.Duration) error {
 		return errors.New("polling interval cannot be zero")
 	}
 
+	setupMtx.RLock()
+	stop := stopPolling
+	setupMtx.RUnlock()
+
+	if stop == nil {
+		return errors.New("worker threads not started")
+	}
+
 	ticker := time.NewTicker(interval)
 
 	go func() {
@@ -59,12 +69,11 @@ func StartPollingAvailableJobs(interval time.Duration) error {
 			select {
 			case <-ticker.C:
 				onCheckJob()
-			case _, isOpen := <-checkJobSignal:
-				// if the checkJob channel is closed, exit
-				if !isOpen {
-					ticker.Stop()
-					return
-				}
+			case <-stop:
+				// Receives immediately when channel is closed.
+				// No value is ever sent; closing is the only signal.
+				ticker.Stop()
+				return
 			}
 		}
 	}()
@@ -96,6 +105,7 @@ func StartThreads(ctx context.Context, numThreads int) error {
 	workerWaitGroup = new(sync.WaitGroup)
 	workerWaitGroup.Add(numThreads)
 	checkJobSignal = make(chan struct{}, 1024)
+	stopPolling = make(chan struct{})
 
 	for i := range numThreads {
 		go worker(i)
@@ -170,12 +180,15 @@ func FinishThreads() {
 	}
 
 	close(checkJobSignal)
+	// Closing stopPolling unblocks any goroutine receiving from it
+	close(stopPolling)
 
 	// Wait for workers to finish while holding the lock.
 	// This is safe because workers don't acquire setupMtx.
 	workerWaitGroup.Wait()
 	workerWaitGroup = nil
 	checkJobSignal = nil
+	stopPolling = nil
 
 	log.Info("Threads have finished").Log()
 }
@@ -200,4 +213,6 @@ func StopThreads(ctx context.Context) {
 	}
 
 	close(checkJobSignal)
+	// Closing stopPolling unblocks any goroutine receiving from it
+	close(stopPolling)
 }
