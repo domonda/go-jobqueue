@@ -19,8 +19,9 @@ var (
 	workerWaitGroup   *sync.WaitGroup
 	// checkJobSignal is a dummy signal notifying the thread workers that there is a new job available
 	checkJobSignal chan struct{}
-	// stopPolling is closed to signal the polling goroutine to stop
-	stopPolling chan struct{}
+	// stopPolling is closed to signal the polling goroutine to stop,
+	// then reassigned to a new channel for the next polling cycle
+	stopPolling = make(chan struct{})
 
 	workers    = map[JobType]WorkerFunc{}
 	workersMtx sync.RWMutex
@@ -46,6 +47,7 @@ func onCheckJob() {
 }
 
 // StartPollingAvailableJobs polls the database for available jobs every `interval` duration.
+// Can be called before or after StartThreads.
 func StartPollingAvailableJobs(interval time.Duration) error {
 	if interval < 0 {
 		return errors.New("polling interval cannot be negative")
@@ -55,12 +57,11 @@ func StartPollingAvailableJobs(interval time.Duration) error {
 	}
 
 	setupMtx.RLock()
+	// Capture channel reference in local variable.
+	// This ensures the goroutine below will receive the close signal
+	// even if stopPolling is reassigned to a new channel later.
 	stop := stopPolling
 	setupMtx.RUnlock()
-
-	if stop == nil {
-		return errors.New("worker threads not started")
-	}
 
 	ticker := time.NewTicker(interval)
 
@@ -105,7 +106,6 @@ func StartThreads(ctx context.Context, numThreads int) error {
 	workerWaitGroup = new(sync.WaitGroup)
 	workerWaitGroup.Add(numThreads)
 	checkJobSignal = make(chan struct{}, 1024)
-	stopPolling = make(chan struct{})
 
 	for i := range numThreads {
 		go worker(i)
@@ -180,15 +180,17 @@ func FinishThreads() {
 	}
 
 	close(checkJobSignal)
-	// Closing stopPolling unblocks any goroutine receiving from it
+	checkJobSignal = nil
+	// Closing stopPolling unblocks any goroutine receiving from it.
+	// Reassigning to a new channel is safe because running goroutines
+	// have captured the old channel reference in a local variable.
 	close(stopPolling)
+	stopPolling = make(chan struct{})
 
 	// Wait for workers to finish while holding the lock.
 	// This is safe because workers don't acquire setupMtx.
 	workerWaitGroup.Wait()
 	workerWaitGroup = nil
-	checkJobSignal = nil
-	stopPolling = nil
 
 	log.Info("Threads have finished").Log()
 }
@@ -213,6 +215,10 @@ func StopThreads(ctx context.Context) {
 	}
 
 	close(checkJobSignal)
-	// Closing stopPolling unblocks any goroutine receiving from it
+	checkJobSignal = nil
+	// Closing stopPolling unblocks any goroutine receiving from it.
+	// Reassigning to a new channel is safe because running goroutines
+	// have captured the old channel reference in a local variable.
 	close(stopPolling)
+	stopPolling = make(chan struct{})
 }
