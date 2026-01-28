@@ -40,6 +40,14 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	}
 
 	jobCtx := golog.ContextWithAttribs(ctx, golog.NewUUID("jobID", job.ID))
+
+	// Apply timeout if configured
+	if JobTimeout > 0 {
+		var cancel context.CancelFunc
+		jobCtx, cancel = context.WithTimeout(jobCtx, JobTimeout)
+		defer cancel()
+	}
+
 	result, jobErr := worker(jobCtx, job)
 	if jobErr != nil {
 		errorTitle := errs.Root(jobErr).Error()
