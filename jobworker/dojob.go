@@ -18,6 +18,9 @@ import (
 // The job.ID is added to the context that's passed to the
 // job worker function as golog attribute with the key "jobID".
 //
+// If the passed context already has a deadline, it will be respected.
+// Otherwise, JobTimeout is applied if configured.
+//
 // StartedAt, StoppedAt, and UpdatedAt are not modified.
 func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer func() {
@@ -40,6 +43,16 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	}
 
 	jobCtx := golog.ContextWithAttribs(ctx, golog.NewUUID("jobID", job.ID))
+
+	// Apply timeout if configured and context doesn't already have a deadline
+	if JobTimeout > 0 {
+		if _, hasDeadline := jobCtx.Deadline(); !hasDeadline {
+			var cancel context.CancelFunc
+			jobCtx, cancel = context.WithTimeout(jobCtx, JobTimeout)
+			defer cancel()
+		}
+	}
+
 	result, jobErr := worker(jobCtx, job)
 	if jobErr != nil {
 		errorTitle := errs.Root(jobErr).Error()
