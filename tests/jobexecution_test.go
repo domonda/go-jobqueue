@@ -2,14 +2,16 @@ package tests
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/caarlos0/env/v7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -398,23 +400,19 @@ func setupDBConn(t *testing.T) {
 func dbConfigFromEnv(t *testing.T) *sqldb.Config {
 	t.Helper()
 
-	var config struct {
-		PostgresPort     uint16 `env:"POSTGRES_PORT" envDefault:"5432"`
-		PostgresHost     string `env:"POSTGRES_HOST" envDefault:"localhost"`
-		PostgresUser     string `env:"POSTGRES_USER" envDefault:"postgres"`
-		PostgresPassword string `env:"POSTGRES_PASSWORD"`
-		PostgresDb       string `env:"POSTGRES_DB" envDefault:"domonda"`
+	portStr := cmp.Or(os.Getenv("POSTGRES_PORT"), "5432")
+	port, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil {
+		panic(err)
 	}
-	err := env.Parse(&config)
-	require.NoError(t, err)
 
 	return &sqldb.Config{
 		Driver:   "postgres",
-		User:     config.PostgresUser,
-		Password: config.PostgresPassword,
-		Host:     config.PostgresHost,
-		Port:     config.PostgresPort,
-		Database: config.PostgresDb,
+		User:     cmp.Or(os.Getenv("POSTGRES_USER"), "postgres"),
+		Password: os.Getenv("POSTGRES_PASSWORD"),
+		Host:     cmp.Or(os.Getenv("POSTGRES_HOST"), "localhost"),
+		Port:     uint16(port),
+		Database: cmp.Or(os.Getenv("POSTGRES_DB"), "domonda"),
 		Extra:    map[string]string{"sslmode": "disable"},
 	}
 }
