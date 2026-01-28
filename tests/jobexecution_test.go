@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DAtek/env"
+	"github.com/caarlos0/env/v7"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/domonda/go-jobqueue"
 	"github.com/domonda/go-jobqueue/jobworker"
 	"github.com/domonda/go-jobqueue/jobworkerdb"
@@ -19,13 +22,10 @@ import (
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
 	"github.com/domonda/golog"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSimulateJobs(t *testing.T) {
-	ctx := context.Background()
-	setupDBConn(ctx, t)
+	setupDBConn(t)
 
 	t.Run("Job result is being stored on success", func(t *testing.T) {
 		// given
@@ -39,7 +39,6 @@ func TestSimulateJobs(t *testing.T) {
 		retryCount := 0
 		var scheduleRetry jobworker.ScheduleRetryFunc
 		job, waiter := NewRegisteredJobWithWaiter(
-			ctx,
 			t,
 			worker,
 			jobType,
@@ -53,7 +52,7 @@ func TestSimulateJobs(t *testing.T) {
 		require.NoError(t, err)
 
 		// then
-		job, err = jobqueue.GetJob(ctx, job.ID)
+		job, err = jobqueue.GetJob(t.Context(), job.ID)
 		require.NoError(t, err)
 		assert.False(t, job.HasError())
 		assert.Equal(t, nullable.JSON(`"`+jobResult+`"`), job.Result)
@@ -70,7 +69,6 @@ func TestSimulateJobs(t *testing.T) {
 		retryCount := 1
 		var scheduleRetry jobworker.ScheduleRetryFunc
 		_, waiter := NewRegisteredJobWithWaiter(
-			ctx,
 			t,
 			worker,
 			jobType,
@@ -98,7 +96,6 @@ func TestSimulateJobs(t *testing.T) {
 		retryCount := 0
 		var scheduleRetry jobworker.ScheduleRetryFunc
 		job, waiter := NewRegisteredJobWithWaiter(
-			ctx,
 			t,
 			worker,
 			jobType,
@@ -112,7 +109,7 @@ func TestSimulateJobs(t *testing.T) {
 		require.NoError(t, err)
 
 		// then
-		job, err = jobqueue.GetJob(ctx, job.ID)
+		job, err = jobqueue.GetJob(t.Context(), job.ID)
 		require.NoError(t, err)
 		assert.True(t, job.HasError())
 		assert.Equal(t, nullable.NonEmptyString(jobErr.Error()), job.ErrorMsg)
@@ -137,7 +134,6 @@ func TestSimulateJobs(t *testing.T) {
 		jobType := "7476c878-eec4-4d0c-9ff5-fea0f3dcaf1c"
 		jobID := uu.IDFrom("54b3c462-6d9b-45cb-8096-2d2f262881e1")
 		job, waiter := NewRegisteredJobWithWaiter(
-			ctx,
 			t,
 			worker,
 			jobType,
@@ -151,7 +147,7 @@ func TestSimulateJobs(t *testing.T) {
 		require.NoError(t, err)
 
 		// then
-		job, err = jobqueue.GetJob(ctx, job.ID)
+		job, err = jobqueue.GetJob(t.Context(), job.ID)
 		require.NoError(t, err)
 		assert.False(t, job.HasError())
 	})
@@ -172,7 +168,6 @@ func TestSimulateJobs(t *testing.T) {
 		jobType := "3af846f5-bacb-4922-b5e5-8156005bcef2"
 		jobID := uu.IDFrom("8f4ee5f3-6aa6-4a4a-88b5-5c874a901428")
 		job, waiter := NewRegisteredJobWithWaiter(
-			ctx,
 			t,
 			worker,
 			jobType,
@@ -186,7 +181,7 @@ func TestSimulateJobs(t *testing.T) {
 		require.NoError(t, err)
 
 		// then
-		job, err = jobqueue.GetJob(ctx, job.ID)
+		job, err = jobqueue.GetJob(t.Context(), job.ID)
 		require.NoError(t, err)
 		assert.Equal(t, nullable.NonEmptyString(jobErr.Error()), job.ErrorMsg)
 	})
@@ -217,7 +212,6 @@ func TestSimulateJobs(t *testing.T) {
 		jobType := "3801a227-6e26-4040-add5-89bad4dc9b7b"
 		jobID := uu.IDFrom("3653ca42-618f-4ba0-b529-d6e415627305")
 		_, waiter := NewRegisteredJobWithWaiter(
-			ctx,
 			t,
 			worker,
 			jobType,
@@ -276,7 +270,6 @@ func TestSimulateJobs(t *testing.T) {
 		jobType := "e7e4da66-c5ce-4389-be48-0d520e2c7518"
 		jobID := uu.IDFrom("0de33f26-57a5-48e0-ae64-a51c218bc50e")
 		_, waiter := NewRegisteredJobWithWaiter(
-			ctx,
 			t,
 			worker,
 			jobType,
@@ -318,7 +311,6 @@ type PartialLogRecord struct {
 }
 
 func NewRegisteredJobWithWaiter(
-	ctx context.Context,
 	t *testing.T,
 	workerFunc jobworker.WorkerFunc,
 	jobType string,
@@ -347,17 +339,17 @@ func NewRegisteredJobWithWaiter(
 	)
 	require.NoError(t, err)
 
-	err = jobqueue.Add(ctx, job)
+	err = jobqueue.Add(t.Context(), job)
 	require.NoError(t, err)
 
-	t.Cleanup(func() { jobqueue.DeleteJob(ctx, jobID) })
+	t.Cleanup(func() { jobqueue.DeleteJob(context.Background(), jobID) })
 
-	err = jobworker.StartThreads(ctx, 1)
+	err = jobworker.StartThreads(t.Context(), 1)
 	require.NoError(t, err)
 
-	t.Cleanup(func() { jobworker.StopThreads(ctx) })
+	t.Cleanup(func() { jobworker.StopThreads(context.Background()) })
 
-	return job, NewJobWaiter(ctx, t, jobID)
+	return job, NewJobWaiter(t.Context(), t, jobID)
 }
 
 func NewJobWaiter(ctx context.Context, t *testing.T, jobID uu.ID) *Waiter {
@@ -394,19 +386,26 @@ func (w *Waiter) Wait() error {
 	}
 }
 
-func setupDBConn(ctx context.Context, t *testing.T) {
+func setupDBConn(t *testing.T) {
 	t.Helper()
 
-	conn := pqconn.MustNew(ctx, dbConfigFromEnv(t))
+	conn := pqconn.MustNew(t.Context(), dbConfigFromEnv(t))
 	db.SetConn(conn)
-	err := jobworkerdb.InitJobQueue(ctx)
+	err := jobworkerdb.InitJobQueue(t.Context())
 	require.NoError(t, err)
 }
 
 func dbConfigFromEnv(t *testing.T) *sqldb.Config {
 	t.Helper()
 
-	config, err := loadEnv()
+	var config struct {
+		PostgresPort     uint16 `env:"POSTGRES_PORT" envDefault:"5432"`
+		PostgresHost     string `env:"POSTGRES_HOST" envDefault:"localhost"`
+		PostgresUser     string `env:"POSTGRES_USER" envDefault:"postgres"`
+		PostgresPassword string `env:"POSTGRES_PASSWORD"`
+		PostgresDb       string `env:"POSTGRES_DB" envDefault:"domonda"`
+	}
+	err := env.Parse(&config)
 	require.NoError(t, err)
 
 	return &sqldb.Config{
@@ -419,13 +418,3 @@ func dbConfigFromEnv(t *testing.T) *sqldb.Config {
 		Extra:    map[string]string{"sslmode": "disable"},
 	}
 }
-
-type DBEnvConfig struct {
-	PostgresPort     uint16
-	PostgresHost     string
-	PostgresUser     string
-	PostgresPassword string
-	PostgresDb       string
-}
-
-var loadEnv = env.NewLoader[DBEnvConfig]()
