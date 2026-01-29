@@ -12,7 +12,7 @@ import (
 type JobType = string
 
 var (
-	// setupMtx guards numRunningThreads, workerWaitGroup, checkJobSignal, and stopPolling
+	// setupMtx guards numRunningThreads, workerWaitGroup, checkJobSignal, stopPolling, and workerCtx
 	setupMtx sync.RWMutex
 
 	numRunningThreads int
@@ -22,6 +22,9 @@ var (
 	// stopPolling is closed to signal the polling goroutine to stop,
 	// then reassigned to a new channel for the next polling cycle
 	stopPolling = make(chan struct{})
+	// workerCtx is the context passed to StartThreads,
+	// used to cancel worker threads when the context is cancelled
+	workerCtx context.Context
 
 	workers    = map[JobType]WorkerFunc{}
 	workersMtx sync.RWMutex
@@ -84,7 +87,9 @@ func StartPollingAvailableJobs(interval time.Duration) error {
 
 // StartThreads starts numThreads new threads that are
 // polling postgresdb for jobs to work on.
-// The passed context does not cancel the started threads.
+//
+// The passed context is forwarded to the job worker functions
+// and can be used to cancel them.
 func StartThreads(ctx context.Context, numThreads int) error {
 	if numThreads <= 0 {
 		return errors.New("need at least 1 worker thread")
@@ -102,6 +107,7 @@ func StartThreads(ctx context.Context, numThreads int) error {
 		return err
 	}
 
+	workerCtx = ctx
 	numRunningThreads = numThreads
 	workerWaitGroup = new(sync.WaitGroup)
 	workerWaitGroup.Add(numThreads)
@@ -116,6 +122,9 @@ func StartThreads(ctx context.Context, numThreads int) error {
 
 func nextJob(ctx context.Context) *jobqueue.Job {
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil
+		}
 		job, err := db.StartNextJobOrNil(ctx)
 		if err != nil {
 			OnError(err)
@@ -135,7 +144,9 @@ func nextJob(ctx context.Context) *jobqueue.Job {
 func worker(threadIndex int) {
 	defer workerWaitGroup.Done()
 
-	ctx := context.TODO() // We probably want to use a context to cancel the worker thread
+	setupMtx.RLock()
+	ctx := workerCtx
+	setupMtx.RUnlock()
 
 	log, ctx := log.With().
 		Int("threadIndex", threadIndex).
@@ -154,13 +165,19 @@ func worker(threadIndex int) {
 				Any("job", job).
 				Log()
 		}
+		if err := ctx.Err(); err != nil {
+			return
+		}
 	}
 }
 
 // FinishThreads waits until all worker threads have
 // finished their current jobs and stops them before they start
 // working on new jobs.
-func FinishThreads() {
+//
+// The passed context can be used to pass in an optional
+// database connection ignoring any cancellation.
+func FinishThreads(ctx context.Context) {
 	log.Debug("Finishing threads").Log()
 
 	setupMtx.Lock()
@@ -172,8 +189,9 @@ func FinishThreads() {
 
 	// Inline stopThreadsLocked logic
 	numRunningThreads = 0
+	workerCtx = nil
 
-	err := db.SetJobAvailableListener(context.TODO(), nil)
+	err := db.SetJobAvailableListener(context.WithoutCancel(ctx), nil)
 	if err != nil {
 		OnError(err)
 		log.Error("Error while setting the job available listener to nil").Err(err).Log()
@@ -197,6 +215,9 @@ func FinishThreads() {
 
 // StopThreads stops the threads listening for new jobs.
 // Use FinishThreads to also wait for workers to complete.
+//
+// The passed context can be used to pass in an optional
+// database connection ignoring any cancellation.
 func StopThreads(ctx context.Context) {
 	log.Debug("Stopping threads").Log()
 
@@ -207,8 +228,9 @@ func StopThreads(ctx context.Context) {
 		return
 	}
 	numRunningThreads = 0
+	workerCtx = nil
 
-	err := db.SetJobAvailableListener(ctx, nil)
+	err := db.SetJobAvailableListener(context.WithoutCancel(ctx), nil)
 	if err != nil {
 		OnError(err)
 		log.ErrorCtx(ctx, "Error while setting the job available listener to nil").Err(err).Log()
