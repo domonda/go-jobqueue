@@ -126,7 +126,8 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, job)
 
 	return db.Exec(ctx,
-		`INSERT INTO worker.job
+		/*sql*/ `
+			INSERT INTO worker.job
 			(
 				id,
 				bundle_id,
@@ -145,15 +146,16 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 				$6,
 				$7,
 				$8
-			)`,
-		job.ID,
-		job.BundleID,
-		job.Type,
-		job.Payload,
-		job.Priority,
-		job.Origin,
-		job.MaxRetryCount,
-		job.StartAt,
+			)
+		`,
+		job.ID,            // $1
+		job.BundleID,      // $2
+		job.Type,          // $3
+		job.Payload,       // $4
+		job.Priority,      // $5
+		job.Origin,        // $6
+		job.MaxRetryCount, // $7
+		job.StartAt,       // $8
 	)
 }
 
@@ -221,12 +223,14 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
 		err = db.Exec(ctx,
-			`insert into worker.job_bundle (id, type, origin, num_jobs)
-				values ($1, $2, $3, $4)`,
-			jobBundle.ID,
-			jobBundle.Type,
-			jobBundle.Origin,
-			jobBundle.NumJobs,
+			/*sql*/ `
+				insert into worker.job_bundle (id, type, origin, num_jobs)
+				values ($1, $2, $3, $4)
+			`,
+			jobBundle.ID,      // $1
+			jobBundle.Type,    // $2
+			jobBundle.Origin,  // $3
+			jobBundle.NumJobs, // $4
 		)
 		if err != nil {
 			return err
@@ -251,9 +255,11 @@ func (j *jobworkerDB) GetStatus(ctx context.Context) (status *jobqueue.Status, e
 
 	status = new(jobqueue.Status)
 	err = db.QueryRow(ctx,
-		`select
+		/*sql*/ `
+			select
 			(select count(*) from worker.job)        as num_jobs,
-			(select count(*) from worker.job_bundle) as num_job_bundles`,
+			(select count(*) from worker.job_bundle) as num_job_bundles
+		`,
 	).Scan(
 		&status.NumJobs,
 		&status.NumJobBundles,
@@ -272,10 +278,12 @@ func (j *jobworkerDB) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job,
 	}
 
 	err = db.QueryRows(ctx,
-		`select *
+		/*sql*/ `
+			select *
 			from worker.job
 			where stopped_at is null
-			order by start_at nulls first, created_at`,
+			order by start_at nulls first, created_at
+		`,
 	).ScanStructSlice(&jobs)
 	if err != nil {
 		return nil, err
@@ -291,13 +299,15 @@ func (j *jobworkerDB) GetAllJobsStartedBefore(ctx context.Context, before time.T
 	}
 
 	err = db.QueryRows(ctx,
-		`select *
+		/*sql*/ `
+			select *
 			from worker.job
 			where started_at is not null
 				and started_at < $1
 				and stopped_at is null
-			order by started_at`,
-		before,
+			order by started_at
+		`,
+		before, // $1
 	).ScanStructSlice(&jobs)
 	if err != nil {
 		return nil, err
@@ -313,10 +323,12 @@ func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueu
 	}
 
 	err = db.QueryRows(ctx,
-		`select *
+		/*sql*/ `
+			select *
 			from worker.job
 			where error_msg is not null
-			order by stopped_at`,
+			order by stopped_at
+		`,
 	).ScanStructSlice(&jobs)
 	if err != nil {
 		return nil, err
@@ -416,7 +428,8 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 		now := time.Now()
 
 		err = tx.QueryRow(
-			`select *
+			/*sql*/ `
+				select *
 				from worker.job
 				where started_at is null
 					and (start_at is null or start_at <= $1)
@@ -425,9 +438,10 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 					priority desc,
 					created_at desc
 				limit 1
-				for update skip locked`,
-			now,
-			jobTypes,
+				for update skip locked
+			`,
+			now,      // $1
+			jobTypes, // $2
 		).ScanStruct(&job)
 		if err != nil {
 			return sqldb.ReplaceErrNoRows(err, nil)
@@ -436,12 +450,14 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 		job.StartedAt.Set(now)
 		job.UpdatedAt = now
 		return tx.Exec(
-			`update worker.job
+			/*sql*/ `
+				update worker.job
 				set started_at=$1, updated_at=$2
-				where id = $3`,
-			job.StartedAt,
-			job.UpdatedAt,
-			job.ID,
+				where id = $3
+			`,
+			job.StartedAt, // $1
+			job.UpdatedAt, // $2
+			job.ID,        // $3
 		)
 	})
 	if err != nil {
@@ -461,12 +477,14 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 		tx := db.Conn(ctx)
 		// update job
 		err = tx.Exec(
-			`update worker.job
+			/*sql*/ `
+				update worker.job
 				set stopped_at=now(), error_msg=$1, error_data=$2, updated_at=now()
-				where id = $3`,
-			errorMsg,
-			errorData,
-			jobID,
+				where id = $3
+			`,
+			errorMsg,  // $1
+			errorData, // $2
+			jobID,     // $3
 		)
 		if err != nil {
 			return err
@@ -475,12 +493,14 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 		// update job bundle
 		var jobBundleID uu.ID
 		err = tx.QueryRow(
-			`select b.id
+			/*sql*/ `
+				select b.id
 				from worker.job_bundle as b
 				inner join worker.job as j on j.bundle_id = b.id
 				where j.id = $1
-				for update skip locked`,
-			jobID,
+				for update skip locked
+			`,
+			jobID, // $1
 		).Scan(&jobBundleID)
 		if sqldb.ReplaceErrNoRows(err, nil) != nil {
 			return err
@@ -488,10 +508,12 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 
 		if jobBundleID.Valid() {
 			err = tx.Exec(
-				`update worker.job_bundle
+				/*sql*/ `
+					update worker.job_bundle
 					set num_jobs_stopped=num_jobs_stopped+1, updated_at=now()
-					where id = $1`,
-				jobBundleID,
+					where id = $1
+				`,
+				jobBundleID, // $1
 			)
 			if err != nil {
 				return err
@@ -510,7 +532,8 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 	}
 
 	return db.Exec(ctx,
-		`update worker.job
+		/*sql*/ `
+			update worker.job
 			set
 				started_at=null,
 				stopped_at=null,
@@ -518,8 +541,9 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 				error_data=null,
 				result=null,
 				updated_at=now()
-			where id = $1`,
-		jobID,
+			where id = $1
+		`,
+		jobID, // $1
 	)
 }
 
@@ -531,7 +555,8 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 	}
 
 	return db.Exec(ctx,
-		`update worker.job
+		/*sql*/ `
+			update worker.job
 			set
 				started_at=null,
 				stopped_at=null,
@@ -539,8 +564,9 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 				error_data=null,
 				result=null,
 				updated_at=now()
-			where id = any($1)`,
-		jobIDs,
+			where id = any($1)
+		`,
+		jobIDs, // $1
 	)
 }
 
@@ -560,11 +586,13 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 		tx := db.Conn(ctx)
 
 		err = tx.Exec(
-			`update worker.job
+			/*sql*/ `
+				update worker.job
 				set result=$1, stopped_at=now(), updated_at=now(), error_msg=null, error_data=null
-				where id = $2`,
-			result,
-			jobID,
+				where id = $2
+			`,
+			result, // $1
+			jobID,  // $2
 		)
 		if err != nil {
 			return err
@@ -572,12 +600,14 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 
 		var jobBundleID uu.ID
 		err = tx.QueryRow(
-			`select b.id
+			/*sql*/ `
+				select b.id
 				from worker.job_bundle as b
 					inner join worker.job as j on j.bundle_id = b.id
 				where j.id = $1
-				for update skip locked`,
-			jobID,
+				for update skip locked
+			`,
+			jobID, // $1
 		).Scan(&jobBundleID)
 		if sqldb.ReplaceErrNoRows(err, nil) != nil {
 			return err
@@ -585,10 +615,12 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 
 		if jobBundleID.Valid() {
 			err = tx.Exec(
-				`update worker.job_bundle
+				/*sql*/ `
+					update worker.job_bundle
 					set num_jobs_stopped=num_jobs_stopped+1, updated_at=now()
-					where id = $1`,
-				jobBundleID,
+					where id = $1
+				`,
+				jobBundleID, // $1
 			)
 			if err != nil {
 				return err
@@ -607,7 +639,8 @@ func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time
 	}
 
 	return db.Exec(ctx,
-		`update worker.job
+		/*sql*/ `
+			update worker.job
 			set
 				start_at=$1,
 				started_at=null,
@@ -615,9 +648,10 @@ func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time
 				error_msg=null,
 				error_data=null,
 				updated_at=now()
-			where id = $2`,
-		startAt,
-		jobID,
+			where id = $2
+		`,
+		startAt, // $1
+		jobID,   // $2
 	)
 }
 
@@ -629,17 +663,19 @@ func (j *jobworkerDB) ScheduleRetry(ctx context.Context, jobID uu.ID, startAt ti
 	}
 
 	return db.Exec(ctx,
-		`update worker.job
+		/*sql*/ `
+			update worker.job
 			set
 				start_at=$1,
 				started_at=null,
 				stopped_at=null,
 				current_retry_count=$2,
 				updated_at=now()
-			where id = $3`,
-		startAt,
-		retryCount,
-		jobID,
+			where id = $3
+		`,
+		startAt,    // $1
+		retryCount, // $2
+		jobID,      // $3
 	)
 }
 
@@ -650,7 +686,9 @@ func (j *jobworkerDB) DeleteJob(ctx context.Context, jobID uu.ID) (err error) {
 		return jobqueue.ErrClosed
 	}
 
-	return db.Exec(ctx, "delete from worker.job where id = $1", jobID)
+	return db.Exec(ctx,
+		/*sql*/ `delete from worker.job where id = $1`, jobID,
+	)
 }
 
 func (j *jobworkerDB) DeleteJobsFromOrigin(ctx context.Context, origin string) (err error) {
@@ -660,17 +698,21 @@ func (j *jobworkerDB) DeleteJobsFromOrigin(ctx context.Context, origin string) (
 		return jobqueue.ErrClosed
 	}
 
-	return db.Exec(ctx, "delete from worker.job where origin = $1", origin)
+	return db.Exec(ctx,
+		/*sql*/ `delete from worker.job where origin = $1`, origin,
+	)
 }
 
 func (j *jobworkerDB) DeleteJobsOfType(ctx context.Context, jobType string) (err error) {
-	defer errs.WrapWithFuncParams(&err, jobType)
+	defer errs.WrapWithFuncParams(&err, ctx, jobType)
 
 	if j.closed {
 		return jobqueue.ErrClosed
 	}
 
-	return db.Exec(ctx, "delete from worker.job where type = $1", jobType)
+	return db.Exec(ctx,
+		/*sql*/ `delete from worker.job where type = $1`, jobType,
+	)
 }
 
 func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
@@ -681,10 +723,12 @@ func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
 	}
 
 	return db.Exec(ctx,
-		`delete from worker.job
+		/*sql*/ `
+			delete from worker.job
 			where stopped_at is not null
 				and	error_msg is null
-				and	bundle_id is null`,
+				and	bundle_id is null
+		`,
 	)
 }
 
@@ -697,21 +741,25 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 
 	err = db.TransactionReadOnly(ctx, func(ctx context.Context) error {
 		err = db.QueryRow(ctx,
-			`select *
+			/*sql*/ `
+				select *
 				from worker.job_bundle
-				where id = $1`,
-			jobBundleID,
+				where id = $1
+			`,
+			jobBundleID, // $1
 		).ScanStruct(&jobBundle)
 		if err != nil {
 			return err
 		}
 
 		return db.QueryRows(ctx,
-			`select *
+			/*sql*/ `
+				select *
 				from worker.job
 				where bundle_id = $1
-				order by created_at`,
-			jobBundleID,
+				order by created_at
+			`,
+			jobBundleID, // $1
 		).ScanStructSlice(&jobBundle.Jobs)
 	})
 	if err != nil {
@@ -728,7 +776,9 @@ func (j *jobworkerDB) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) (e
 		return jobqueue.ErrClosed
 	}
 
-	return db.Exec(ctx, "delete from worker.job_bundle where id = $1", jobBundleID)
+	return db.Exec(ctx,
+		/*sql*/ `delete from worker.job_bundle where id = $1`, jobBundleID,
+	)
 }
 
 func (j *jobworkerDB) DeleteJobBundlesFromOrigin(ctx context.Context, origin string) (err error) {
@@ -738,7 +788,9 @@ func (j *jobworkerDB) DeleteJobBundlesFromOrigin(ctx context.Context, origin str
 		return jobqueue.ErrClosed
 	}
 
-	return db.Exec(ctx, "delete from worker.job_bundle where origin = $1", origin)
+	return db.Exec(ctx,
+		/*sql*/ `delete from worker.job_bundle where origin = $1`, origin,
+	)
 }
 
 func (j *jobworkerDB) DeleteJobBundlesOfType(ctx context.Context, bundleType string) (err error) {
@@ -748,7 +800,9 @@ func (j *jobworkerDB) DeleteJobBundlesOfType(ctx context.Context, bundleType str
 		return jobqueue.ErrClosed
 	}
 
-	return db.Exec(ctx, "delete from worker.job_bundle where type = $1", bundleType)
+	return db.Exec(ctx,
+		/*sql*/ `delete from worker.job_bundle where type = $1`, bundleType,
+	)
 }
 
 func (j *jobworkerDB) DeleteAllJobsAndBundles(ctx context.Context) (err error) {
@@ -759,10 +813,14 @@ func (j *jobworkerDB) DeleteAllJobsAndBundles(ctx context.Context) (err error) {
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
-		err = db.Exec(ctx, "delete from worker.job_bundle")
+		err = db.Exec(ctx,
+			/*sql*/ `delete from worker.job_bundle`,
+		)
 		if err != nil {
 			return err
 		}
-		return db.Exec(ctx, "delete from worker.job")
+		return db.Exec(ctx,
+			/*sql*/ `delete from worker.job`,
+		)
 	})
 }
