@@ -87,6 +87,7 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 
 func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, job)
+	defer errs.RecoverPanicAsError(&err)
 
 	err = DoJob(ctx, job)
 	if err == nil {

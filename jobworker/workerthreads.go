@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/domonda/go-errs"
 	"github.com/domonda/go-jobqueue"
 )
 
@@ -69,6 +70,8 @@ func StartPollingAvailableJobs(interval time.Duration) error {
 	ticker := time.NewTicker(interval)
 
 	go func() {
+		defer errs.RecoverAndLogPanicWithFuncParams(log.ErrorWriter())
+
 		for {
 			select {
 			case <-ticker.C:
