@@ -109,7 +109,22 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 		return err
 	}
 
-	if ctx.Err() != nil || job.CurrentRetryCount >= job.MaxRetryCount {
+	if job.CurrentRetryCount >= job.MaxRetryCount {
+		return nil
+	}
+
+	if ctx.Err() != nil {
+		// Context was cancelled (e.g. shutdown) but the job has retries left.
+		// Reset the job so it can be picked up again after restart
+		// instead of being stuck as permanently errored.
+		resetErr := db.ResetJob(context.WithoutCancel(ctx), job.ID)
+		if resetErr != nil {
+			OnError(resetErr)
+			log.ErrorCtx(ctx, "Error resetting job for retry after context cancellation").
+				UUID("jobID", job.ID).
+				Err(resetErr).
+				Log()
+		}
 		return ctx.Err()
 	}
 

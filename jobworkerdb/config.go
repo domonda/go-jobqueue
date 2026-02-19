@@ -35,7 +35,7 @@ func InitJobQueue(ctx context.Context) (err error) {
 	}
 	if numReset > 0 {
 		log.Info("Reset interrupted retryable jobs on startup").
-			Int64("numReset", numReset).
+			Int("numReset", numReset).
 			Log()
 	}
 
@@ -46,12 +46,12 @@ func InitJobQueue(ctx context.Context) (err error) {
 // state by a previous shutdown or crash but still have retries remaining.
 // This clears their execution state so they can be picked up again.
 // Returns the number of jobs that were reset.
-func resetInterruptedRetryableJobs(ctx context.Context) (numReset int64, err error) {
+func resetInterruptedRetryableJobs(ctx context.Context) (numReset int, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	numReset, err = db.QueryValue[int64](ctx,
+	numReset, err = db.QueryValue[int](ctx,
 		/*sql*/ `
-			with reset as (
+			with resets as (
 				update worker.job
 				set
 					started_at=null,
@@ -65,7 +65,7 @@ func resetInterruptedRetryableJobs(ctx context.Context) (numReset int64, err err
 					and current_retry_count < max_retry_count
 				returning id
 			)
-			select count(*) from reset
+			select count(*) from resets
 		`,
 	)
 	return numReset, err
