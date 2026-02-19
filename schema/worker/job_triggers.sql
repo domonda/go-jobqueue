@@ -34,9 +34,10 @@ $$
 BEGIN
     PERFORM pg_notify('job_stopped',
         json_build_object(
-            'id',     NEW.id,
-            'type',   NEW."type",
-            'origin', NEW.origin
+            'id',        NEW.id,
+            'type',      NEW."type",
+            'origin',    NEW.origin,
+            'willRetry', NEW.error_msg IS NOT NULL AND NEW.current_retry_count < NEW.max_retry_count
         )::text
     );
     RETURN NEW;

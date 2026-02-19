@@ -61,8 +61,13 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 			return
 		}
 
-		var job jobqueue.Job
-		err := json.Unmarshal([]byte(payload), &job)
+		var notification struct {
+			ID        uu.ID  `json:"id"`
+			Type      string `json:"type"`
+			Origin    string `json:"origin"`
+			WillRetry bool   `json:"willRetry"`
+		}
+		err := json.Unmarshal([]byte(payload), &notification)
 		if err != nil {
 			log.ErrorCtx(ctx, "onJobStopped").Err(err).Log()
 			return
@@ -74,9 +79,8 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 
 		ctx := context.Background() // Don't use ctx of enclosing listen method
 
-		willRetry := job.HasError() && job.CurrentRetryCount < job.MaxRetryCount
 		for _, l := range listeners {
-			l.OnJobStopped(ctx, job.ID, job.Type, job.Origin, willRetry)
+			l.OnJobStopped(ctx, notification.ID, notification.Type, notification.Origin, notification.WillRetry)
 		}
 	}
 
