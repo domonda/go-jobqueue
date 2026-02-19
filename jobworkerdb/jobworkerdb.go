@@ -74,8 +74,9 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 
 		ctx := context.Background() // Don't use ctx of enclosing listen method
 
+		willRetry := job.HasError() && job.CurrentRetryCount < job.MaxRetryCount
 		for _, l := range listeners {
-			l.OnJobStopped(ctx, job.ID, job.Type, job.Origin)
+			l.OnJobStopped(ctx, job.ID, job.Type, job.Origin, willRetry)
 		}
 	}
 

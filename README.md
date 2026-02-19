@@ -216,7 +216,7 @@ Listen for job and job bundle completion events:
 ```go
 type MyListener struct{}
 
-func (l *MyListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, origin string) {
+func (l *MyListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, origin string, willRetry bool) {
     log.Printf("Job %s completed", jobID)
 }
 

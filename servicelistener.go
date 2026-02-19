@@ -8,7 +8,13 @@ import (
 )
 
 type ServiceListener interface {
-	OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string)
+	// OnJobStopped is called when a job has stopped.
+	// willRetry indicates that the job will be retried
+	// and this is not the final stop.
+	// Note: when willRetry is true, the job may already have been
+	// reset for retry by the time the handler reads it from the database,
+	// so its state may no longer reflect the error that triggered this notification.
+	OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string, willRetry bool)
 	OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID, jobBundleType, jobBundleOrigin string)
 }
 
@@ -20,7 +26,7 @@ type defaultServiceListener struct {
 	Service
 }
 
-func (l defaultServiceListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string) {
+func (l defaultServiceListener) OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string, willRetry bool) {
 	job, err := l.Service.GetJob(ctx, jobID)
 	if err != nil {
 		if errs.IsErrNotFound(err) {
@@ -45,7 +51,7 @@ func (l defaultServiceListener) OnJobStopped(ctx context.Context, jobID uu.ID, j
 	jobStoppedListenersMtx.RUnlock()
 
 	for _, listener := range listeners {
-		listener.OnJobStopped(job)
+		listener.OnJobStopped(job, willRetry)
 	}
 }
 
