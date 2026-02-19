@@ -689,6 +689,8 @@ func (j *jobworkerDB) ScheduleRetry(ctx context.Context, jobID uu.ID, startAt ti
 				start_at=$1,
 				started_at=null,
 				stopped_at=null,
+				error_msg=null,
+				error_data=null,
 				current_retry_count=$2,
 				updated_at=now()
 			where id = $3
