@@ -23,19 +23,14 @@ go get github.com/domonda/go-jobqueue
 
 ### 1. Set up the Database
 
-Run the SQL schema from `schema/worker.sql` to create the necessary tables and functions:
-
-```bash
-psql -h localhost -U postgres -d your_database -f schema/worker.sql
-```
+Create the `worker` schema in PostgreSQL with the required tables (`worker.job`, `worker.job_bundle`)
+and triggers for LISTEN/NOTIFY notifications.
 
 ### 2. Initialize the Service
 
 ```go
 import (
     "context"
-    "github.com/domonda/go-jobqueue"
-    "github.com/domonda/go-jobqueue/jobworker"
     "github.com/domonda/go-jobqueue/jobworkerdb"
     "github.com/domonda/go-sqldb/db"
 )
@@ -46,13 +41,13 @@ func main() {
     // Initialize database connection
     db.SetConn(yourPostgresConnection)
 
-    // Create and set the default job queue service
-    service := jobworkerdb.New()
-    jobqueue.SetDefaultService(service)
-    defer service.Close()
-
-    // Set the database for workers
-    jobworker.SetDataBase(service)
+    // Initialize the job queue service, registers it as the default
+    // for both jobqueue and jobworker packages, and resets any
+    // jobs interrupted by a previous shutdown or crash.
+    err := jobworkerdb.InitJobQueue(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 
@@ -127,7 +122,7 @@ if err != nil {
 }
 
 // Wait for completion when shutting down
-defer jobworker.FinishThreads()
+defer jobworker.FinishThreads(ctx)
 ```
 
 ## Advanced Usage
@@ -264,21 +259,6 @@ err = jobqueue.DeleteFinishedJobs(ctx)
 err = jobqueue.DeleteJob(ctx, jobID)
 ```
 
-### Context-Specific Services
-
-Use different job queue services in different contexts:
-
-```go
-// Create a custom service instance
-customService := jobworkerdb.New()
-
-// Add it to context
-ctx = jobqueue.ContextWithService(ctx, customService)
-
-// Jobs added in this context use the custom service
-jobqueue.Add(ctx, job)
-```
-
 ### Synchronous Job Execution for Testing
 
 Execute jobs synchronously without database persistence:
@@ -294,13 +274,25 @@ jobqueue.Add(ctx, job)
 
 ### Ignoring Jobs for Testing
 
-Ignore job execution entirely:
+Ignore all jobs:
 
 ```go
-ctx = jobworkerdb.ContextWithIgnoreJobs(ctx)
+ctx = jobworkerdb.ContextWithIgnoreJob(ctx, jobworkerdb.IgnoreAllJobs)
 
 // Jobs added in this context are discarded
 jobqueue.Add(ctx, job)
+```
+
+Ignore jobs of a specific type:
+
+```go
+ctx = jobworkerdb.ContextWithIgnoreJobType(ctx, "my-job-type")
+```
+
+Ignore all job bundles:
+
+```go
+ctx = jobworkerdb.ContextWithIgnoreJobBundle(ctx, jobworkerdb.IgnoreAllJobBundles)
 ```
 
 ## Architecture
@@ -313,7 +305,7 @@ jobqueue.Add(ctx, job)
 
 ### Database Schema
 
-The package uses three main tables in the `worker` schema:
+The package uses the `worker` schema in PostgreSQL:
 
 - `worker.job`: Individual jobs with type, payload, priority, and status
 - `worker.job_bundle`: Job bundles grouping multiple jobs
@@ -342,7 +334,7 @@ All errors are wrapped using `github.com/domonda/go-errs` for enhanced stack tra
 1. **Idempotent Workers**: Design workers to be safely retried
 2. **Job Origins**: Use meaningful origin strings for debugging and filtering
 3. **Timeouts**: Always pass contexts with appropriate timeouts to worker functions
-4. **Graceful Shutdown**: Call `jobworker.FinishThreads()` to let in-flight jobs complete
+4. **Graceful Shutdown**: Call `jobworker.FinishThreads(ctx)` to let in-flight jobs complete
 5. **Monitor Queue Depth**: Regularly check queue status to detect bottlenecks
 6. **Clean Up**: Periodically delete finished jobs to prevent table bloat
 
@@ -368,4 +360,4 @@ go test ./...
 
 ## License
 
-See LICENSE file
+[MIT License](LICENSE)

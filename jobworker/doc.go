@@ -56,7 +56,7 @@ Start a worker thread pool to process jobs concurrently:
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer jobworker.FinishThreads() // Wait for jobs to complete
+	defer jobworker.FinishThreads(ctx) // Wait for jobs to complete
 
 # Retry Scheduling
 

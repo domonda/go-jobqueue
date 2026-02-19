@@ -3,32 +3,36 @@ Package jobworkerdb provides the PostgreSQL implementation of the jobqueue servi
 
 # Overview
 
-The jobworkerdb package implements the jobqueue.Service interface using PostgreSQL
-as the backend. It handles job persistence, retrieval, and uses PostgreSQL's
-LISTEN/NOTIFY for real-time job notifications.
+The jobworkerdb package implements the jobqueue.Service and jobworker.DataBase
+interfaces using PostgreSQL as the backend. It handles job persistence,
+retrieval, and uses PostgreSQL's LISTEN/NOTIFY for real-time job notifications.
 
 # Initialization
 
-Create a new service instance:
+Initialize the job queue with [InitJobQueue] which creates the service,
+registers it as the default for both jobqueue and jobworker packages,
+and resets any jobs interrupted by a previous shutdown or crash:
 
-	service := jobworkerdb.New()
-	jobqueue.SetDefaultService(service)
-	defer service.Close()
+	err := jobworkerdb.InitJobQueue(ctx)
+
+The database connection must be set up before calling InitJobQueue:
+
+	import "github.com/domonda/go-sqldb/db"
+	db.SetConn(postgresConnection)
 
 # Database Schema
 
-The package requires the worker schema to be created in PostgreSQL.
-Run the SQL files in the schema/ directory to set up:
-- worker.job table
-- worker.job_bundle table
-- PostgreSQL triggers for notifications
+The package requires the worker schema in PostgreSQL with:
+  - worker.job table
+  - worker.job_bundle table
+  - PostgreSQL triggers for LISTEN/NOTIFY notifications
 
 # LISTEN/NOTIFY
 
 The service uses PostgreSQL LISTEN/NOTIFY for real-time job notifications:
-- job_available: Fired when a new job is ready to process
-- job_stopped: Fired when a job completes
-- job_bundle_stopped: Fired when all jobs in a bundle complete
+  - job_available: Fired when a new job is ready to process
+  - job_stopped: Fired when a job completes
+  - job_bundle_stopped: Fired when all jobs in a bundle complete
 
 # Testing Utilities
 
@@ -39,28 +43,30 @@ Synchronous job execution (no database persistence):
 	ctx = jobworkerdb.ContextWithSynchronousJobs(ctx)
 	jobqueue.Add(ctx, job) // Executes immediately
 
-Ignore jobs entirely:
+Ignore all jobs using the [IgnoreAllJobs] predicate:
 
-	ctx = jobworkerdb.ContextWithIgnoreJobs(ctx)
+	ctx = jobworkerdb.ContextWithIgnoreJob(ctx, jobworkerdb.IgnoreAllJobs)
 	jobqueue.Add(ctx, job) // Job is discarded
 
-Ignore job bundles:
+Ignore jobs of a specific type:
 
-	ctx = jobworkerdb.ContextWithIgnoreJobBundles(ctx)
+	ctx = jobworkerdb.ContextWithIgnoreJobType(ctx, "my-job-type")
+
+Ignore all job bundles using the [IgnoreAllJobBundles] predicate:
+
+	ctx = jobworkerdb.ContextWithIgnoreJobBundle(ctx, jobworkerdb.IgnoreAllJobBundles)
 	jobqueue.AddBundle(ctx, bundle) // Bundle is discarded
+
+Custom filtering with [IgnoreJobFunc] and [IgnoreJobBundleFunc]:
+
+	ctx = jobworkerdb.ContextWithIgnoreJob(ctx, func(job *jobqueue.Job) bool {
+		return job.Type == "skip-this"
+	})
 
 # Transactions
 
 The implementation uses database transactions to ensure consistency:
-- Job bundles are inserted atomically with all their jobs
-- Job completion updates job_bundle.num_jobs_stopped in a transaction
-
-# Connection Management
-
-The package uses github.com/domonda/go-sqldb/db for database connections.
-Set up the database connection before creating the service:
-
-	import "github.com/domonda/go-sqldb/db"
-	db.SetConn(postgresConnection)
+  - Job bundles are inserted atomically with all their jobs
+  - Job completion updates job_bundle.num_jobs_stopped in a transaction
 */
 package jobworkerdb
