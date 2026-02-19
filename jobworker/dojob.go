@@ -113,7 +113,9 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 		return ctx.Err()
 	}
 
+	retrySchedulersMtx.RLock()
 	scheduleRetry, ok := retrySchedulers[job.Type]
+	retrySchedulersMtx.RUnlock()
 	if !ok {
 		err = errs.New("Retry scheduler doesn't exist for job")
 		OnError(err)
