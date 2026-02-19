@@ -442,7 +442,7 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 					and "type" = any($2::text[])
 				order by
 					priority desc,
-					created_at desc
+					created_at asc
 				limit 1
 				for update skip locked
 			`,
