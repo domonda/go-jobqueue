@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/domonda/go-errs"
@@ -26,6 +27,10 @@ var (
 	// workerCtx is the context passed to StartThreads,
 	// used to cancel worker threads when the context is cancelled
 	workerCtx context.Context
+	// stopping is set to true by FinishThreads/StopThreads
+	// so that nextJob won't pick up new jobs from the database.
+	// Using atomic.Bool so nextJob can check it without holding setupMtx.
+	stopping atomic.Bool
 
 	workers    = map[JobType]WorkerFunc{}
 	workersMtx sync.RWMutex
@@ -111,6 +116,7 @@ func StartThreads(ctx context.Context, numThreads int) error {
 	}
 
 	workerCtx = ctx
+	stopping.Store(false)
 	numRunningThreads = numThreads
 	workerWaitGroup = new(sync.WaitGroup)
 	workerWaitGroup.Add(numThreads)
@@ -124,10 +130,7 @@ func StartThreads(ctx context.Context, numThreads int) error {
 }
 
 func nextJob(ctx context.Context) *jobqueue.Job {
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil
-		}
+	for ctx.Err() == nil && !stopping.Load() {
 		job, err := db.StartNextJobOrNil(ctx)
 		if err != nil {
 			OnError(err)
@@ -142,6 +145,7 @@ func nextJob(ctx context.Context) *jobqueue.Job {
 			return nil
 		}
 	}
+	return nil
 }
 
 func worker(threadIndex int) {
@@ -190,7 +194,10 @@ func FinishThreads(ctx context.Context) {
 		return
 	}
 
-	// Inline stopThreadsLocked logic
+	// Signal workers to stop picking up new jobs before closing the channel.
+	// nextJob checks this flag before calling db.StartNextJobOrNil
+	// so workers won't start new jobs after this point.
+	stopping.Store(true)
 	numRunningThreads = 0
 	workerCtx = nil
 
@@ -233,6 +240,10 @@ func StopThreads(ctx context.Context) {
 	if numRunningThreads == 0 {
 		return
 	}
+	// Signal workers to stop picking up new jobs before closing the channel.
+	// nextJob checks this flag before calling db.StartNextJobOrNil
+	// so workers won't start new jobs after this point.
+	stopping.Store(true)
 	numRunningThreads = 0
 	workerCtx = nil
 
