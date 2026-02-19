@@ -498,14 +498,13 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 			return err
 		}
 
-		// update job bundle
-		// Use `for update` (blocking) instead of `for update skip locked`
-		// because every job completion must increment the bundle counter.
-		// This is different from StartNextJobOrNil where `skip locked`
-		// is correct because workers compete for any unclaimed job row.
-		// Here there is one specific bundle row that must be updated
-		// by every completing job, so skipping would lose increments
-		// and potentially leave the bundle stuck forever.
+		// Only increment the bundle's num_jobs_stopped counter
+		// when the job is truly done (no retries remaining).
+		// Jobs that will be retried (via ScheduleRetry or ResetJob)
+		// must not increment the counter here, otherwise the counter
+		// gets incremented again when the retry completes, which
+		// violates the CHECK(num_jobs_stopped <= num_jobs) constraint
+		// and causes premature bundle completion.
 		var jobBundleID uu.ID
 		err = tx.QueryRow(
 			/*sql*/ `
@@ -513,6 +512,7 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 				from worker.job_bundle as b
 				inner join worker.job as j on j.bundle_id = b.id
 				where j.id = $1
+					and j.current_retry_count >= j.max_retry_count
 				for update
 			`,
 			jobID, // $1
