@@ -345,11 +345,9 @@ func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueu
 func (j *jobworkerDB) Close() (err error) {
 	defer errs.WrapWithFuncParams(&err)
 
-	if j.closed.Load() {
+	if !j.closed.CompareAndSwap(false, true) {
 		return jobqueue.ErrClosed
 	}
-
-	j.closed.Store(true)
 
 	j.listenersMtx.Lock()
 	defer j.listenersMtx.Unlock()
