@@ -1,13 +1,13 @@
 module github.com/domonda/go-jobqueue
 
-go 1.24.6
+go 1.25.5
 
 require (
 	github.com/domonda/go-errs v1.0.0
 	github.com/domonda/go-sqldb v0.0.0-20260126153722-52d8c4d30a61
 	github.com/domonda/go-sqldb/pqconn v0.0.0-20260126153722-52d8c4d30a61
-	github.com/domonda/go-types v0.0.0-20260115133137-07f43dd1f81f
-	github.com/domonda/golog v0.0.0-20251212125807-78ee7a8a18a8
+	github.com/domonda/go-types v0.0.0-20260219122018-0ae6843ef823
+	github.com/domonda/golog v1.0.5
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -21,7 +21,7 @@ require (
 	github.com/domonda/go-pretty v1.0.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/lib/pq v1.11.1 // indirect
+	github.com/lib/pq v1.11.2 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -29,7 +29,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
-	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/term v0.39.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/term v0.40.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
