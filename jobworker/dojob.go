@@ -138,7 +138,10 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 		return err
 	}
 
-	err = db.ScheduleRetry(ctx, job.ID, nextStart, job.CurrentRetryCount+1)
+	// Use WithoutCancel like SetJobError above to prevent a race
+	// where context cancellation between the ctx.Err() check and
+	// this call would leave the job marked as errored without retry.
+	err = db.ScheduleRetry(context.WithoutCancel(ctx), job.ID, nextStart, job.CurrentRetryCount+1)
 	if err != nil {
 		OnError(err)
 		log.ErrorCtx(ctx, "Could not schedule retry for job").
