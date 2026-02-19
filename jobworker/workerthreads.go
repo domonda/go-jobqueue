@@ -110,6 +110,14 @@ func StartThreads(ctx context.Context, numThreads int) error {
 		return errors.New("worker threads already running")
 	}
 
+	// Wait for old workers from a previous StopThreads call to finish
+	// before starting new ones, so they don't read the new checkJobSignal.
+	if workerWaitGroup != nil {
+		workerWaitGroup.Wait()
+		workerWaitGroup = nil
+		checkJobSignal = nil
+	}
+
 	err := db.SetJobAvailableListener(ctx, onCheckJob)
 	if err != nil {
 		return err
