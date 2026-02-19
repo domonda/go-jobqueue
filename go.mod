@@ -3,7 +3,7 @@ module github.com/domonda/go-jobqueue
 go 1.24.6
 
 require (
-	github.com/domonda/go-errs v0.0.0-20260113110342-222f906bd7a6
+	github.com/domonda/go-errs v1.0.0
 	github.com/domonda/go-sqldb v0.0.0-20260126153722-52d8c4d30a61
 	github.com/domonda/go-sqldb/pqconn v0.0.0-20260126153722-52d8c4d30a61
 	github.com/domonda/go-types v0.0.0-20260115133137-07f43dd1f81f
@@ -18,7 +18,7 @@ require (
 	github.com/corazawaf/libinjection-go v0.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/domonda/go-encjson v1.0.0 // indirect
-	github.com/domonda/go-pretty v0.0.0-20260112082908-96fe37692898 // indirect
+	github.com/domonda/go-pretty v1.0.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lib/pq v1.11.1 // indirect

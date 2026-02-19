@@ -13,8 +13,12 @@ github.com/domonda/go-encjson v1.0.0 h1:zA59L1u8gWBNGtD/4OAwuisxvpd3IddzwUn53qzs
 github.com/domonda/go-encjson v1.0.0/go.mod h1:ElLE5XGBbBn/tvy5DFvkk8CAWiQX+6c85Q5WJrpN8R4=
 github.com/domonda/go-errs v0.0.0-20260113110342-222f906bd7a6 h1:t62BGlnCZ4pAc5mzA9k3pEor9qNXErIZ5w58azYl55k=
 github.com/domonda/go-errs v0.0.0-20260113110342-222f906bd7a6/go.mod h1:4U3qPS6uRfi3Y5dv9HgTQjenLWvoSlXTSfkn2FQGNfI=
+github.com/domonda/go-errs v1.0.0 h1:sVuSamm65RrYu1naLRBDb59x4SDSt/ZZOz4TWDfYk0Y=
+github.com/domonda/go-errs v1.0.0/go.mod h1:zt5V57wkHr3YNuCGemVABL/OUa0zFbixzr5CXiKYp6w=
 github.com/domonda/go-pretty v0.0.0-20260112082908-96fe37692898 h1:2rewcM60RPEmkBHDmgceBvgA9s1N+ArKzMKMBMu2X7s=
 github.com/domonda/go-pretty v0.0.0-20260112082908-96fe37692898/go.mod h1:O05JaeEezfZ2ian+t10+JrAZFKadSIsqWdukNtOPEzI=
+github.com/domonda/go-pretty v1.0.0 h1:58OcAmEgcYEOuMQRXtC0jAndPKqHfV3TVZUttWKnRc4=
+github.com/domonda/go-pretty v1.0.0/go.mod h1:O05JaeEezfZ2ian+t10+JrAZFKadSIsqWdukNtOPEzI=
 github.com/domonda/go-sqldb v0.0.0-20260126153722-52d8c4d30a61 h1:2QsbPTqZE7sgrNtZYlz052JLUpNCwq0J9NJq4iM44wE=
 github.com/domonda/go-sqldb v0.0.0-20260126153722-52d8c4d30a61/go.mod h1:dxWPNZQbEj1nbVhH/YDNe03Hag3a8p4A6ppudYdQkMA=
 github.com/domonda/go-sqldb/pqconn v0.0.0-20260126153722-52d8c4d30a61 h1:nfNVafWPZJYx0AjvGxmdQzI5cR0z3B0bxhAhpFwnm6c=
