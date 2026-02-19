@@ -201,7 +201,6 @@ func FinishThreads(ctx context.Context) {
 	}
 
 	close(checkJobSignal)
-	checkJobSignal = nil
 	// Closing stopPolling unblocks any goroutine receiving from it.
 	// Reassigning to a new channel is safe because running goroutines
 	// have captured the old channel reference in a local variable.
@@ -210,8 +209,12 @@ func FinishThreads(ctx context.Context) {
 
 	// Wait for workers to finish while holding the lock.
 	// This is safe because workers don't acquire setupMtx.
+	// Don't nil checkJobSignal before Wait completes because
+	// workers read it without holding the lock in nextJob,
+	// and receiving from a nil channel blocks forever.
 	workerWaitGroup.Wait()
 	workerWaitGroup = nil
+	checkJobSignal = nil
 
 	log.Info("Threads have finished").Log()
 }
@@ -240,7 +243,10 @@ func StopThreads(ctx context.Context) {
 	}
 
 	close(checkJobSignal)
-	checkJobSignal = nil
+	// Don't nil checkJobSignal here because StopThreads doesn't wait
+	// for workers to finish, and receiving from a nil channel blocks forever.
+	// StartThreads will overwrite it with a new channel.
+
 	// Closing stopPolling unblocks any goroutine receiving from it.
 	// Reassigning to a new channel is safe because running goroutines
 	// have captured the old channel reference in a local variable.
