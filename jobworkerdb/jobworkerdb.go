@@ -427,6 +427,12 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 		tx := db.Conn(ctx)
 		now := time.Now()
 
+		// Use `skip locked` here because multiple workers compete for jobs
+		// and any unclaimed row will do. If a row is already locked by
+		// another worker, skipping it and grabbing the next one is correct.
+		// This is different from the bundle counter updates in SetJobError
+		// and SetJobResult where `for update` (blocking) is required
+		// because every completion must update that specific bundle row.
 		err = tx.QueryRow(
 			/*sql*/ `
 				select *
@@ -491,6 +497,13 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 		}
 
 		// update job bundle
+		// Use `for update` (blocking) instead of `for update skip locked`
+		// because every job completion must increment the bundle counter.
+		// This is different from StartNextJobOrNil where `skip locked`
+		// is correct because workers compete for any unclaimed job row.
+		// Here there is one specific bundle row that must be updated
+		// by every completing job, so skipping would lose increments
+		// and potentially leave the bundle stuck forever.
 		var jobBundleID uu.ID
 		err = tx.QueryRow(
 			/*sql*/ `
@@ -498,7 +511,7 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 				from worker.job_bundle as b
 				inner join worker.job as j on j.bundle_id = b.id
 				where j.id = $1
-				for update skip locked
+				for update
 			`,
 			jobID, // $1
 		).Scan(&jobBundleID)
@@ -598,6 +611,13 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 			return err
 		}
 
+		// Use `for update` (blocking) instead of `for update skip locked`
+		// because every job completion must increment the bundle counter.
+		// This is different from StartNextJobOrNil where `skip locked`
+		// is correct because workers compete for any unclaimed job row.
+		// Here there is one specific bundle row that must be updated
+		// by every completing job, so skipping would lose increments
+		// and potentially leave the bundle stuck forever.
 		var jobBundleID uu.ID
 		err = tx.QueryRow(
 			/*sql*/ `
@@ -605,7 +625,7 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 				from worker.job_bundle as b
 					inner join worker.job as j on j.bundle_id = b.id
 				where j.id = $1
-				for update skip locked
+				for update
 			`,
 			jobID, // $1
 		).Scan(&jobBundleID)
