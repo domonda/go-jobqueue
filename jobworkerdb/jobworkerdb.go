@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/domonda/go-errs"
@@ -20,7 +21,7 @@ type jobworkerDB struct {
 	serviceListeners        []jobqueue.ServiceListener
 	hasJobAvailableListener bool
 	listenersMtx            sync.Mutex
-	closed                  bool
+	closed                  atomic.Bool
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -29,7 +30,7 @@ type jobworkerDB struct {
 func (j *jobworkerDB) AddListener(ctx context.Context, listener jobqueue.ServiceListener) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, listener)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 	if listener == nil {
@@ -56,7 +57,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 	onJobStopped := func(channel, payload string) {
 		defer errs.RecoverAndLogPanicWithFuncParams(log.ErrorWriter(), channel, payload)
 
-		if j.closed {
+		if j.closed.Load() {
 			return
 		}
 
@@ -86,7 +87,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 	onJobBundleStopped := func(channel, payload string) {
 		defer errs.RecoverAndLogPanicWithFuncParams(log.ErrorWriter(), channel, payload)
 
-		if j.closed {
+		if j.closed.Load() {
 			return
 		}
 
@@ -162,7 +163,7 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, job)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -191,7 +192,7 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		job.BundleID.Set(jobBundle.ID)
 	}
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -249,7 +250,7 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 func (j *jobworkerDB) GetStatus(ctx context.Context) (status *jobqueue.Status, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if j.closed.Load() {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -273,7 +274,7 @@ func (j *jobworkerDB) GetStatus(ctx context.Context) (status *jobqueue.Status, e
 func (j *jobworkerDB) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if j.closed.Load() {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -294,7 +295,7 @@ func (j *jobworkerDB) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job,
 func (j *jobworkerDB) GetAllJobsStartedBefore(ctx context.Context, before time.Time) (jobs []*jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if j.closed.Load() {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -318,7 +319,7 @@ func (j *jobworkerDB) GetAllJobsStartedBefore(ctx context.Context, before time.T
 func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if j.closed.Load() {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -339,11 +340,11 @@ func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueu
 func (j *jobworkerDB) Close() (err error) {
 	defer errs.WrapWithFuncParams(&err)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
-	j.closed = true
+	j.closed.Store(true)
 
 	j.listenersMtx.Lock()
 	defer j.listenersMtx.Unlock()
@@ -403,7 +404,7 @@ func (j *jobworkerDB) SetJobAvailableListener(ctx context.Context, callback func
 func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID)
 
-	if j.closed {
+	if j.closed.Load() {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -417,7 +418,7 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if j.closed.Load() {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -475,7 +476,7 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg string, errorData nullable.JSON) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID, errorMsg, errorData)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -540,7 +541,7 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -563,7 +564,7 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobIDs)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -586,7 +587,7 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result nullable.JSON) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID, result)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -654,7 +655,7 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time.Time) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID, startAt)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -678,7 +679,7 @@ func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time
 func (j *jobworkerDB) ScheduleRetry(ctx context.Context, jobID uu.ID, startAt time.Time, retryCount int) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID, startAt)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -704,7 +705,7 @@ func (j *jobworkerDB) ScheduleRetry(ctx context.Context, jobID uu.ID, startAt ti
 func (j *jobworkerDB) DeleteJob(ctx context.Context, jobID uu.ID) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -716,7 +717,7 @@ func (j *jobworkerDB) DeleteJob(ctx context.Context, jobID uu.ID) (err error) {
 func (j *jobworkerDB) DeleteJobsFromOrigin(ctx context.Context, origin string) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, origin)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -728,7 +729,7 @@ func (j *jobworkerDB) DeleteJobsFromOrigin(ctx context.Context, origin string) (
 func (j *jobworkerDB) DeleteJobsOfType(ctx context.Context, jobType string) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobType)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -740,7 +741,7 @@ func (j *jobworkerDB) DeleteJobsOfType(ctx context.Context, jobType string) (err
 func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -757,7 +758,7 @@ func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
 func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobBundle *jobqueue.JobBundle, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobBundleID)
 
-	if j.closed {
+	if j.closed.Load() {
 		return nil, jobqueue.ErrClosed
 	}
 
@@ -794,7 +795,7 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 func (j *jobworkerDB) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobBundleID)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -806,7 +807,7 @@ func (j *jobworkerDB) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) (e
 func (j *jobworkerDB) DeleteJobBundlesFromOrigin(ctx context.Context, origin string) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, origin)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -818,7 +819,7 @@ func (j *jobworkerDB) DeleteJobBundlesFromOrigin(ctx context.Context, origin str
 func (j *jobworkerDB) DeleteJobBundlesOfType(ctx context.Context, bundleType string) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, bundleType)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
@@ -830,7 +831,7 @@ func (j *jobworkerDB) DeleteJobBundlesOfType(ctx context.Context, bundleType str
 func (j *jobworkerDB) DeleteAllJobsAndBundles(ctx context.Context) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	if j.closed {
+	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
