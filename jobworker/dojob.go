@@ -89,15 +89,15 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 	defer errs.WrapWithFuncParams(&err, job)
 	defer errs.RecoverPanicAsError(&err)
 
-	err = DoJob(ctx, job)
-	if err == nil {
+	jobErr := DoJob(ctx, job)
+	if jobErr == nil {
 		return db.SetJobResult(context.WithoutCancel(ctx), job.ID, job.Result)
 	}
 
 	// job.ErrorMsg might be null if DoJob returns an error
 	// that was not returned from the jobworker but from
 	// some other job-queue logic error,
-	errorMsg := job.ErrorMsg.StringOr(err.Error())
+	errorMsg := job.ErrorMsg.StringOr(jobErr.Error())
 	err = db.SetJobError(context.WithoutCancel(ctx), job.ID, errorMsg, job.ErrorData)
 	if err != nil {
 		OnError(err)
@@ -109,12 +109,10 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 		return err
 	}
 
-	if ctx.Err() != nil {
-		// Context was cancelled (e.g. shutdown), so the error is not
-		// from the job logic but from the cancellation. Reset the job
-		// so it can be picked up again after restart instead of being
-		// stuck as permanently errored. This applies to all jobs
-		// regardless of retry count.
+	if ctx.Err() != nil || errors.Is(jobErr, context.Canceled) {
+		// Context was cancelled (e.g. shutdown) or the job error
+		// was caused by a cancelled context. Reset the job so it
+		// can be picked up again without consuming a retry attempt.
 		resetErr := db.ResetJob(context.WithoutCancel(ctx), job.ID)
 		if resetErr != nil {
 			OnError(resetErr)
