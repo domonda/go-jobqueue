@@ -548,20 +548,51 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 		return jobqueue.ErrClosed
 	}
 
-	return db.Exec(ctx,
-		/*sql*/ `
-			update worker.job
-			set
-				started_at=null,
-				stopped_at=null,
-				error_msg=null,
-				error_data=null,
-				result=null,
-				updated_at=now()
-			where id = $1
-		`,
-		jobID, // $1
-	)
+	return db.Transaction(ctx, func(ctx context.Context) error {
+		tx := db.Conn(ctx)
+
+		// Decrement the bundle counter if this job was already counted
+		// as stopped. A job is counted when SetJobResult or SetJobError
+		// incremented num_jobs_stopped, which happens when:
+		// - the job succeeded (error_msg IS NULL, result set), or
+		// - the job failed with all retries exhausted (current_retry_count >= max_retry_count).
+		// Without this decrement, resetting and re-running the job would
+		// increment the counter a second time, violating the
+		// CHECK(num_jobs_stopped <= num_jobs) constraint.
+		err = tx.Exec(
+			/*sql*/ `
+				update worker.job_bundle
+				set num_jobs_stopped = num_jobs_stopped - 1, updated_at = now()
+				where id = (
+					select j.bundle_id
+					from worker.job as j
+					where j.id = $1
+						and j.bundle_id is not null
+						and j.stopped_at is not null
+						and (j.error_msg is null or j.current_retry_count >= j.max_retry_count)
+				)
+			`,
+			jobID, // $1
+		)
+		if err != nil {
+			return err
+		}
+
+		return tx.Exec(
+			/*sql*/ `
+				update worker.job
+				set
+					started_at=null,
+					stopped_at=null,
+					error_msg=null,
+					error_data=null,
+					result=null,
+					updated_at=now()
+				where id = $1
+			`,
+			jobID, // $1
+		)
+	})
 }
 
 func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) {
@@ -571,20 +602,50 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 		return jobqueue.ErrClosed
 	}
 
-	return db.Exec(ctx,
-		/*sql*/ `
-			update worker.job
-			set
-				started_at=null,
-				stopped_at=null,
-				error_msg=null,
-				error_data=null,
-				result=null,
-				updated_at=now()
-			where id = any($1)
-		`,
-		jobIDs, // $1
-	)
+	return db.Transaction(ctx, func(ctx context.Context) error {
+		tx := db.Conn(ctx)
+
+		// Decrement bundle counters for jobs that were already counted
+		// as stopped. See ResetJob for the detailed explanation.
+		// Jobs may belong to different bundles, so group by bundle_id
+		// and decrement each bundle's counter by the number of its
+		// already-counted jobs being reset.
+		err = tx.Exec(
+			/*sql*/ `
+				update worker.job_bundle as b
+				set num_jobs_stopped = b.num_jobs_stopped - counted.cnt, updated_at = now()
+				from (
+					select j.bundle_id, count(*) as cnt
+					from worker.job as j
+					where j.id = any($1)
+						and j.bundle_id is not null
+						and j.stopped_at is not null
+						and (j.error_msg is null or j.current_retry_count >= j.max_retry_count)
+					group by j.bundle_id
+				) as counted
+				where b.id = counted.bundle_id
+			`,
+			jobIDs, // $1
+		)
+		if err != nil {
+			return err
+		}
+
+		return tx.Exec(
+			/*sql*/ `
+				update worker.job
+				set
+					started_at=null,
+					stopped_at=null,
+					error_msg=null,
+					error_data=null,
+					result=null,
+					updated_at=now()
+				where id = any($1)
+			`,
+			jobIDs, // $1
+		)
+	})
 }
 
 func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result nullable.JSON) (err error) {
