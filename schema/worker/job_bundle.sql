@@ -7,8 +7,8 @@ CREATE TABLE worker.job_bundle (
     num_jobs         integer NOT NULL CHECK(num_jobs >= 0),
     num_jobs_stopped integer NOT NULL DEFAULT 0 CHECK(num_jobs_stopped >= 0 AND num_jobs_stopped <= num_jobs),
 
-    updated_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    created_at timestamptz NOT NULL DEFAULT now()
 );
 
 COMMENT ON TABLE worker.job_bundle IS 'A bundle of `Job`s to be worked out later.';

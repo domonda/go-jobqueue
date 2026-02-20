@@ -340,19 +340,40 @@ All errors are wrapped using `github.com/domonda/go-errs` for enhanced stack tra
 
 ## Testing
 
-Run the test suite:
+Tests require a PostgreSQL instance. The test script `scripts/run-tests.sh` handles
+everything automatically:
+
+1. **Connects to PostgreSQL** — checks if an instance is already running at
+   `POSTGRES_HOST:POSTGRES_PORT` (from `.env.example`, default `127.0.0.1:5432`)
+   with user `POSTGRES_USER` (default `postgres`). The user must have `CREATE DATABASE` privileges.
+2. **Starts Docker Compose** — if no PostgreSQL is reachable, starts one via `docker compose up`.
+3. **Creates a temporary database** — named `test-jobqueue-XXXXXXXX` (random suffix to prevent
+   collisions between parallel runs).
+4. **Applies the schema** — runs `schema/worker.sql` against the temporary database.
+5. **Runs the Go tests** — executes `go test` against the `tests/` package.
+6. **Drops the temporary database** — always cleaned up, even on test failure.
 
 ```bash
-# Start PostgreSQL via Docker Compose
-docker-compose up -d
+# Run all tests
+./scripts/run-tests.sh
 
-# Run tests
-go test ./...
+# Verbose output
+./scripts/run-tests.sh -v
+
+# Destroy Docker Compose after tests (used in CI)
+./scripts/run-tests.sh -d
+
+# Run specific tests
+./scripts/run-tests.sh -- -run TestReset
 ```
+
+If PostgreSQL is running but the configured user cannot connect, the script
+prints an error with actionable instructions (create the user, stop the
+existing instance, or set different credentials).
 
 ## Dependencies
 
-- PostgreSQL 12+
+- PostgreSQL 17+
 - [github.com/domonda/go-sqldb](https://github.com/domonda/go-sqldb) - SQL database utilities
 - [github.com/domonda/go-types](https://github.com/domonda/go-types) - Type system extensions
 - [github.com/domonda/go-errs](https://github.com/domonda/go-errs) - Enhanced error handling

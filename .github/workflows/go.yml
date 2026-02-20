@@ -23,4 +23,4 @@ jobs:
 
     - name: Test
       shell: bash
-      run: ./scripts/run-tests-ci.sh
+      run: ./scripts/run-tests.sh -d
