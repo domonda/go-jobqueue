@@ -7,7 +7,8 @@ create table worker.job (
     payload  jsonb not null,
     priority bigint not null,
     origin   text not null check(length(origin) > 0 and length(origin) <= 100),
-    max_retry_count int not null default 0,
+
+    max_retry_count     int not null default 0,
     current_retry_count int not null default 0,
 
     start_at   timestamptz, -- If NOT NULL, earliest time to start the job
@@ -21,8 +22,8 @@ create table worker.job (
     error_data jsonb, -- Optional error metadata
 	result     jsonb, -- Result if the job returned one
 
-    updated_at timestamptz not null default current_timestamp,
-    created_at timestamptz not null default current_timestamp
+    updated_at timestamptz not null default now(),
+    created_at timestamptz not null default now()
 );
 
 comment on table worker.job IS 'A `Job` to be worked out later.';
@@ -36,19 +37,3 @@ create index worker_job_stopped_at_idx on worker.job(stopped_at);
 -- CREATE INDEX worker_job_payload_idx ON worker.job (payload);
 -- CREATE INDEX worker_job_type_payload_start_at_idx ON worker.job ("type", payload, start_at);
 
-----
-
--- TODO remove
-create function worker.job_ready(
-    job worker.job
-) returns boolean as
-$$
-    select (
-        -- not started
-		job.started_at is null
-	) and (
-		-- start at time is reached
-		(job.start_at is null) or (job.start_at <= now())
-	)
-$$
-language sql immutable;
