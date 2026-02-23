@@ -428,7 +428,6 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 	jobTypes := jobworker.RegisteredJobTypes()
 
 	err = db.Transaction(ctx, func(ctx context.Context) error {
-		tx := db.Conn(ctx)
 		now := time.Now()
 
 		// Use `skip locked` here because multiple workers compete for jobs
@@ -437,7 +436,7 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 		// This is different from the bundle counter updates in SetJobError
 		// and SetJobResult where `for update` (blocking) is required
 		// because every completion must update that specific bundle row.
-		err = tx.QueryRow(
+		err = db.QueryRow(ctx,
 			/*sql*/ `
 				select *
 				from worker.job
@@ -459,7 +458,7 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 
 		job.StartedAt.Set(now)
 		job.UpdatedAt = now
-		return tx.Exec(
+		return db.Exec(ctx,
 			/*sql*/ `
 				update worker.job
 				set started_at=$1, updated_at=$2
@@ -484,9 +483,8 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
-		tx := db.Conn(ctx)
 		// update job
-		err = tx.Exec(
+		err = db.Exec(ctx,
 			/*sql*/ `
 				update worker.job
 				set stopped_at=now(), error_msg=$1, error_data=$2, updated_at=now()
@@ -508,7 +506,7 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 		// violates the CHECK(num_jobs_stopped <= num_jobs) constraint
 		// and causes premature bundle completion.
 		var jobBundleID uu.ID
-		err = tx.QueryRow(
+		err = db.QueryRow(ctx,
 			/*sql*/ `
 				select b.id
 				from worker.job_bundle as b
@@ -524,7 +522,7 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 		}
 
 		if jobBundleID.Valid() {
-			err = tx.Exec(
+			err = db.Exec(ctx,
 				/*sql*/ `
 					update worker.job_bundle
 					set num_jobs_stopped=num_jobs_stopped+1, updated_at=now()
@@ -549,8 +547,6 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
-		tx := db.Conn(ctx)
-
 		// Decrement the bundle counter if this job was already counted
 		// as stopped. A job is counted when SetJobResult or SetJobError
 		// incremented num_jobs_stopped, which happens when:
@@ -559,7 +555,7 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 		// Without this decrement, resetting and re-running the job would
 		// increment the counter a second time, violating the
 		// CHECK(num_jobs_stopped <= num_jobs) constraint.
-		err = tx.Exec(
+		err = db.Exec(ctx,
 			/*sql*/ `
 				update worker.job_bundle
 				set num_jobs_stopped = num_jobs_stopped - 1, updated_at = now()
@@ -578,7 +574,7 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 			return err
 		}
 
-		return tx.Exec(
+		return db.Exec(ctx,
 			/*sql*/ `
 				update worker.job
 				set
@@ -587,6 +583,7 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 					error_msg=null,
 					error_data=null,
 					result=null,
+					current_retry_count=0,
 					updated_at=now()
 				where id = $1
 			`,
@@ -603,14 +600,12 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
-		tx := db.Conn(ctx)
-
 		// Decrement bundle counters for jobs that were already counted
 		// as stopped. See ResetJob for the detailed explanation.
 		// Jobs may belong to different bundles, so group by bundle_id
 		// and decrement each bundle's counter by the number of its
 		// already-counted jobs being reset.
-		err = tx.Exec(
+		err = db.Exec(ctx,
 			/*sql*/ `
 				update worker.job_bundle as b
 				set num_jobs_stopped = b.num_jobs_stopped - counted.cnt, updated_at = now()
@@ -631,7 +626,7 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 			return err
 		}
 
-		return tx.Exec(
+		return db.Exec(ctx,
 			/*sql*/ `
 				update worker.job
 				set
@@ -640,6 +635,7 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 					error_msg=null,
 					error_data=null,
 					result=null,
+					current_retry_count=0,
 					updated_at=now()
 				where id = any($1)
 			`,
@@ -661,9 +657,7 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
-		tx := db.Conn(ctx)
-
-		err = tx.Exec(
+		err = db.Exec(ctx,
 			/*sql*/ `
 				update worker.job
 				set result=$1, stopped_at=now(), updated_at=now(), error_msg=null, error_data=null
@@ -684,7 +678,7 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 		// by every completing job, so skipping would lose increments
 		// and potentially leave the bundle stuck forever.
 		var jobBundleID uu.ID
-		err = tx.QueryRow(
+		err = db.QueryRow(ctx,
 			/*sql*/ `
 				select b.id
 				from worker.job_bundle as b
@@ -699,7 +693,7 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 		}
 
 		if jobBundleID.Valid() {
-			err = tx.Exec(
+			err = db.Exec(ctx,
 				/*sql*/ `
 					update worker.job_bundle
 					set num_jobs_stopped=num_jobs_stopped+1, updated_at=now()
@@ -827,14 +821,14 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 	}
 
 	err = db.TransactionReadOnly(ctx, func(ctx context.Context) error {
-		err = db.QueryRow(ctx,
+		jobBundle, err = db.QueryRowStruct[jobqueue.JobBundle](ctx,
 			/*sql*/ `
 				select *
 				from worker.job_bundle
 				where id = $1
 			`,
 			jobBundleID, // $1
-		).ScanStruct(&jobBundle)
+		)
 		if err != nil {
 			return err
 		}

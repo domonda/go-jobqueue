@@ -13,7 +13,7 @@ END;
 $$
 LANGUAGE plpgsql;
 
-CREATE TRIGGER job_available_trigger
+CREATE TRIGGER job_available_insert_trigger
     AFTER INSERT ON worker.job
     FOR EACH ROW
     WHEN (
@@ -21,6 +21,29 @@ CREATE TRIGGER job_available_trigger
             -- the `start_at` does not exist
             NEW.start_at IS NULL
         ) OR (
+            -- the `start_at` is in the present or the past
+            now() >= NEW.start_at
+        )
+    )
+    EXECUTE PROCEDURE worker.job_available();
+
+-- Fires when a job is reset (started_at cleared) and is available now.
+-- This covers ResetJob, ResetJobs, SetJobStart, and ScheduleRetry
+-- which UPDATE the row instead of INSERTing.
+CREATE TRIGGER job_available_update_trigger
+    AFTER UPDATE ON worker.job
+    FOR EACH ROW
+    WHEN (
+        (
+            -- was previously started
+            OLD.started_at IS NOT NULL
+        ) AND (
+            -- is now reset (available for pickup)
+            NEW.started_at IS NULL
+        ) AND (
+            -- the `start_at` does not exist
+            NEW.start_at IS NULL
+            OR
             -- the `start_at` is in the present or the past
             now() >= NEW.start_at
         )
