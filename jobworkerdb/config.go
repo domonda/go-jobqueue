@@ -12,10 +12,11 @@ import (
 
 var log = rootlog.NewPackageLogger()
 
-// InitJobQueue initializes the job queue with a PostgreSQL-backed service.
+// InitJobQueue initializes the job queue with a PostgreSQL-backed service
+// without resetting any jobs.
 //
-// Jobs that were stopped with an error but still have retries remaining
-// are always reset on startup so they can be picked up again.
+// See InitJobQueueResetInterruptedJobs for an alternative that also resets
+// jobs that were interrupted by a previous shutdown or crash.
 //
 // See InitJobQueueResetDanglingJobs for an alternative that also resets
 // jobs that were mid-execution when the process crashed.
@@ -33,9 +34,21 @@ func InitJobQueue(ctx context.Context) (err error) {
 
 	jobqueue.SetDefaultService(jwDB)
 
-	// Reset jobs that were interrupted by a previous shutdown or crash.
-	// These have started_at and stopped_at set (marked as errored)
-	// but still have retries remaining and should be retried.
+	return nil
+}
+
+// InitJobQueueResetInterruptedJobs calls InitJobQueue and additionally
+// resets jobs that were interrupted by a previous shutdown or crash.
+// These have started_at and stopped_at set (marked as errored)
+// but still have retries remaining and should be retried.
+func InitJobQueueResetInterruptedJobs(ctx context.Context) (err error) {
+	defer errs.WrapWithFuncParams(&err, ctx)
+
+	err = InitJobQueue(ctx)
+	if err != nil {
+		return err
+	}
+
 	numReset, err := resetInterruptedRetryableJobs(ctx)
 	if err != nil {
 		return err
@@ -49,10 +62,10 @@ func InitJobQueue(ctx context.Context) (err error) {
 	return nil
 }
 
-// InitJobQueueResetDanglingJobs calls InitJobQueue and additionally
-// resets jobs that were mid-execution when the process crashed or was
-// killed (started_at set, stopped_at NULL). These jobs appear to be
-// running but no worker is processing them.
+// InitJobQueueResetDanglingJobs calls InitJobQueueResetInterruptedJobs
+// and additionally resets jobs that were mid-execution when the process
+// crashed or was killed (started_at set, stopped_at NULL). These jobs
+// appear to be running but no worker is processing them.
 //
 // This is safe when only a single worker instance is running.
 // In a multi-instance setup, do NOT use this function because another
@@ -62,7 +75,7 @@ func InitJobQueue(ctx context.Context) (err error) {
 func InitJobQueueResetDanglingJobs(ctx context.Context) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	err = InitJobQueue(ctx)
+	err = InitJobQueueResetInterruptedJobs(ctx)
 	if err != nil {
 		return err
 	}
