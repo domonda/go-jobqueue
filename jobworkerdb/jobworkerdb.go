@@ -84,7 +84,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 		}
 	}
 
-	err = db.Conn(ctx).ListenOnChannel("job_stopped", onJobStopped, nil)
+	err = db.ListenOnChannel(ctx, "job_stopped", onJobStopped, nil)
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 		}
 	}
 
-	err = db.Conn(ctx).ListenOnChannel("job_bundle_stopped", onJobBundleStopped, nil)
+	err = db.ListenOnChannel(ctx, "job_bundle_stopped", onJobBundleStopped, nil)
 	if err != nil {
 		return err
 	}
@@ -123,8 +123,8 @@ func (j *jobworkerDB) listen(ctx context.Context) (err error) {
 }
 
 func (*jobworkerDB) unlisten(ctx context.Context) (err error) {
-	err1 := db.Conn(ctx).UnlistenChannel("job_stopped")
-	err2 := db.Conn(ctx).UnlistenChannel("job_bundle_stopped")
+	err1 := db.UnlistenChannel(ctx, "job_stopped")
+	err2 := db.UnlistenChannel(ctx, "job_bundle_stopped")
 	return errors.Join(err1, err2)
 }
 
@@ -260,15 +260,12 @@ func (j *jobworkerDB) GetStatus(ctx context.Context) (status *jobqueue.Status, e
 	}
 
 	status = new(jobqueue.Status)
-	err = db.QueryRow(ctx,
+	status.NumJobs, status.NumJobBundles, err = db.QueryRowAs2[int, int](ctx,
 		/*sql*/ `
 			select
 			(select count(*) from worker.job)        as num_jobs,
 			(select count(*) from worker.job_bundle) as num_job_bundles
 		`,
-	).Scan(
-		&status.NumJobs,
-		&status.NumJobBundles,
 	)
 	if err != nil {
 		return nil, err
@@ -283,18 +280,14 @@ func (j *jobworkerDB) GetAllJobsToDo(ctx context.Context) (jobs []*jobqueue.Job,
 		return nil, jobqueue.ErrClosed
 	}
 
-	err = db.QueryRows(ctx,
+	return db.QueryRowsAsSlice[*jobqueue.Job](ctx,
 		/*sql*/ `
 			select *
 			from worker.job
 			where stopped_at is null
 			order by start_at nulls first, created_at
 		`,
-	).ScanStructSlice(&jobs)
-	if err != nil {
-		return nil, err
-	}
-	return jobs, nil
+	)
 }
 
 func (j *jobworkerDB) GetAllJobsStartedBefore(ctx context.Context, before time.Time) (jobs []*jobqueue.Job, err error) {
@@ -304,7 +297,7 @@ func (j *jobworkerDB) GetAllJobsStartedBefore(ctx context.Context, before time.T
 		return nil, jobqueue.ErrClosed
 	}
 
-	err = db.QueryRows(ctx,
+	return db.QueryRowsAsSlice[*jobqueue.Job](ctx,
 		/*sql*/ `
 			select *
 			from worker.job
@@ -314,11 +307,7 @@ func (j *jobworkerDB) GetAllJobsStartedBefore(ctx context.Context, before time.T
 			order by started_at
 		`,
 		before, // $1
-	).ScanStructSlice(&jobs)
-	if err != nil {
-		return nil, err
-	}
-	return jobs, nil
+	)
 }
 
 func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueue.Job, err error) {
@@ -328,18 +317,14 @@ func (j *jobworkerDB) GetAllJobsWithErrors(ctx context.Context) (jobs []*jobqueu
 		return nil, jobqueue.ErrClosed
 	}
 
-	err = db.QueryRows(ctx,
+	return db.QueryRowsAsSlice[*jobqueue.Job](ctx,
 		/*sql*/ `
 			select *
 			from worker.job
 			where error_msg is not null
 			order by stopped_at
 		`,
-	).ScanStructSlice(&jobs)
-	if err != nil {
-		return nil, err
-	}
-	return jobs, nil
+	)
 }
 
 func (j *jobworkerDB) Close() (err error) {
@@ -355,7 +340,7 @@ func (j *jobworkerDB) Close() (err error) {
 	ctx := context.Background()
 
 	if j.hasJobAvailableListener {
-		err = db.Conn(ctx).UnlistenChannel("job_available")
+		err = db.UnlistenChannel(ctx, "job_available")
 		j.hasJobAvailableListener = false
 	}
 
@@ -383,7 +368,7 @@ func (j *jobworkerDB) SetJobAvailableListener(ctx context.Context, callback func
 	defer j.listenersMtx.Unlock()
 
 	if j.hasJobAvailableListener {
-		err = db.Conn(ctx).UnlistenChannel("job_available")
+		err = db.UnlistenChannel(ctx, "job_available")
 		if err != nil {
 			return err
 		}
@@ -395,7 +380,7 @@ func (j *jobworkerDB) SetJobAvailableListener(ctx context.Context, callback func
 	}
 
 	j.hasJobAvailableListener = true
-	return db.Conn(ctx).ListenOnChannel(
+	return db.ListenOnChannel(ctx,
 		"job_available",
 		func(channel, payload string) {
 			callback()
@@ -411,11 +396,9 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 		return nil, jobqueue.ErrClosed
 	}
 
-	err = db.QueryRow(ctx, `select * from worker.job where id = $1`, jobID).ScanStruct(&job)
-	if err != nil {
-		return nil, err
-	}
-	return job, nil
+	return db.QueryRowAs[*jobqueue.Job](ctx,
+		/*sql*/ `select * from worker.job where id = $1`, jobID,
+	)
 }
 
 func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job, err error) {
@@ -436,7 +419,7 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 		// This is different from the bundle counter updates in SetJobError
 		// and SetJobResult where `for update` (blocking) is required
 		// because every completion must update that specific bundle row.
-		err = db.QueryRow(ctx,
+		job, err = db.QueryRowAs[*jobqueue.Job](ctx,
 			/*sql*/ `
 				select *
 				from worker.job
@@ -451,7 +434,7 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 			`,
 			now,      // $1
 			jobTypes, // $2
-		).ScanStruct(&job)
+		)
 		if err != nil {
 			return sqldb.ReplaceErrNoRows(err, nil)
 		}
@@ -677,8 +660,8 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 		// Here there is one specific bundle row that must be updated
 		// by every completing job, so skipping would lose increments
 		// and potentially leave the bundle stuck forever.
-		var jobBundleID uu.ID
-		err = db.QueryRow(ctx,
+		jobBundleID, err := db.QueryRowAsOr(ctx,
+			uu.IDNull,
 			/*sql*/ `
 				select b.id
 				from worker.job_bundle as b
@@ -687,19 +670,19 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 				for update
 			`,
 			jobID, // $1
-		).Scan(&jobBundleID)
-		if sqldb.ReplaceErrNoRows(err, nil) != nil {
+		)
+		if err != nil {
 			return err
 		}
 
-		if jobBundleID.Valid() {
+		if jobBundleID.IsNotNull() {
 			err = db.Exec(ctx,
 				/*sql*/ `
 					update worker.job_bundle
 					set num_jobs_stopped=num_jobs_stopped+1, updated_at=now()
 					where id = $1
 				`,
-				jobBundleID, // $1
+				jobBundleID.Get(), // $1
 			)
 			if err != nil {
 				return err
@@ -821,7 +804,7 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 	}
 
 	err = db.TransactionReadOnly(ctx, func(ctx context.Context) error {
-		jobBundle, err = db.QueryRowStruct[jobqueue.JobBundle](ctx,
+		jobBundle, err = db.QueryRowAs[*jobqueue.JobBundle](ctx,
 			/*sql*/ `
 				select *
 				from worker.job_bundle
@@ -833,7 +816,7 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 			return err
 		}
 
-		return db.QueryRows(ctx,
+		jobBundle.Jobs, err = db.QueryRowsAsSlice[*jobqueue.Job](ctx,
 			/*sql*/ `
 				select *
 				from worker.job
@@ -841,7 +824,8 @@ func (j *jobworkerDB) GetJobBundle(ctx context.Context, jobBundleID uu.ID) (jobB
 				order by created_at
 			`,
 			jobBundleID, // $1
-		).ScanStructSlice(&jobBundle.Jobs)
+		)
+		return err
 	})
 	if err != nil {
 		return nil, err

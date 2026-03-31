@@ -100,7 +100,7 @@ func InitJobQueueResetDanglingJobs(ctx context.Context) (err error) {
 func resetInterruptedRetryableJobs(ctx context.Context) (numReset int, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	numReset, err = db.QueryValue[int](ctx,
+	return db.QueryRowAs[int](ctx,
 		/*sql*/ `
 			with resets as (
 				update worker.job
@@ -119,7 +119,6 @@ func resetInterruptedRetryableJobs(ctx context.Context) (numReset int, err error
 			select count(*) from resets
 		`,
 	)
-	return numReset, err
 }
 
 // resetDanglingStartedJobs resets jobs that were mid-execution when the
@@ -132,7 +131,7 @@ func resetInterruptedRetryableJobs(ctx context.Context) (numReset int, err error
 func resetDanglingStartedJobs(ctx context.Context) (numReset int, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
-	numReset, err = db.QueryValue[int](ctx,
+	return db.QueryRowAs[int](ctx,
 		/*sql*/ `
 			with resets as (
 				update worker.job
@@ -150,5 +149,4 @@ func resetDanglingStartedJobs(ctx context.Context) (numReset int, err error) {
 			select count(*) from resets
 		`,
 	)
-	return numReset, err
 }

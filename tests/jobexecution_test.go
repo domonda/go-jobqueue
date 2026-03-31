@@ -391,7 +391,7 @@ func (w *Waiter) Wait() error {
 func setupDBConn(t *testing.T) {
 	t.Helper()
 
-	conn := pqconn.MustNew(t.Context(), dbConfigFromEnv(t))
+	conn := pqconn.MustConnect(t.Context(), dbConfigFromEnv(t))
 	db.SetConn(conn)
 	err := jobworkerdb.InitJobQueue(t.Context())
 	require.NoError(t, err)
