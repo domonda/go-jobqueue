@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/domonda/go-sqldb/db"
 	"github.com/domonda/go-types/notnull"
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
 )
 
 type Job struct {
-	ID       uu.ID         `db:"id"        json:"id"`
-	BundleID uu.NullableID `db:"bundle_id" json:"bundleId"`
+	db.TableName `db:"worker.job"`
+
+	ID       uu.ID         `db:"id,primarykey" json:"id"`
+	BundleID uu.NullableID `db:"bundle_id"     json:"bundleId"`
 
 	Type              string        `db:"type"     json:"type"` // CHECK(length("type") > 0 AND length("type") <= 100)
 	Payload           notnull.JSON  `db:"payload"  json:"payload"`

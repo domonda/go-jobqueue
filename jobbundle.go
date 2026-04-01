@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/domonda/go-sqldb/db"
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
 )
@@ -14,8 +15,10 @@ import (
 // The bundle provides a way to wait for completion of all jobs and receive
 // a single notification when all jobs are finished.
 type JobBundle struct {
+	db.TableName `db:"worker.job_bundle"`
+
 	// ID is the unique identifier for the job bundle.
-	ID uu.ID `db:"id,pk" json:"id"`
+	ID uu.ID `db:"id,primarykey" json:"id"`
 
 	// Type categorizes the job bundle for filtering and identification.
 	Type string `db:"type" json:"type"` // CHECK(length("type") > 0)

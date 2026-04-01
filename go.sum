@@ -18,8 +18,12 @@ github.com/domonda/go-pretty v1.0.0 h1:58OcAmEgcYEOuMQRXtC0jAndPKqHfV3TVZUttWKnR
 github.com/domonda/go-pretty v1.0.0/go.mod h1:O05JaeEezfZ2ian+t10+JrAZFKadSIsqWdukNtOPEzI=
 github.com/domonda/go-sqldb v1.0.1 h1:5E9oC7XQUXMvv90XSaVSJTlX4ylxP8M/FQo/b0++O2M=
 github.com/domonda/go-sqldb v1.0.1/go.mod h1:OA0mF0V6YCf5H6bcNsQvv17IfZ/im5NwVZsYQD+i3gY=
+github.com/domonda/go-sqldb v1.0.2 h1:ACvTLcocjz99TEbRV67NLfHLnoDY+FzjSNREVGI73so=
+github.com/domonda/go-sqldb v1.0.2/go.mod h1:OA0mF0V6YCf5H6bcNsQvv17IfZ/im5NwVZsYQD+i3gY=
 github.com/domonda/go-sqldb/pqconn v1.0.1 h1:eZ1kFxuaKw8FNuWPutw3i8vkjBxtmgRgks9not3HCVY=
 github.com/domonda/go-sqldb/pqconn v1.0.1/go.mod h1:f19aecr2f8sMJ5J2c+DepioQiL+RRR1/AX/nuTtBxN8=
+github.com/domonda/go-sqldb/pqconn v1.0.2 h1:FbbWTC+nvKLdXzuf7DFOufnb7cs7CZ7RFwDBl47cuSM=
+github.com/domonda/go-sqldb/pqconn v1.0.2/go.mod h1:f19aecr2f8sMJ5J2c+DepioQiL+RRR1/AX/nuTtBxN8=
 github.com/domonda/go-types v0.0.0-20260327082518-11ac2cfe4cdf h1:ssDqYeBkvlRvh4lhf/x4RGwMVRxbQczQPmb5C9y33Rw=
 github.com/domonda/go-types v0.0.0-20260327082518-11ac2cfe4cdf/go.mod h1:NgqLMXWD9qACWrb3iVg1lj6bjg0e5o2kkKQyMQWNFl8=
 github.com/domonda/golog v1.0.5 h1:hH+yfB/dR1G4VpLupy+6OGQtP2nrSTKgoJBALgkWQKE=

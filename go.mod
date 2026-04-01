@@ -4,8 +4,8 @@ go 1.25.5
 
 require (
 	github.com/domonda/go-errs v1.0.1
-	github.com/domonda/go-sqldb v1.0.1
-	github.com/domonda/go-sqldb/pqconn v1.0.1
+	github.com/domonda/go-sqldb v1.0.2
+	github.com/domonda/go-sqldb/pqconn v1.0.2
 	github.com/domonda/go-types v0.0.0-20260327082518-11ac2cfe4cdf
 	github.com/domonda/golog v1.0.5
 	github.com/stretchr/testify v1.11.1
