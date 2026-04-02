@@ -409,7 +409,7 @@ func dbConfigFromEnv(t *testing.T) *sqldb.Config {
 	return &sqldb.Config{
 		Driver:   "postgres",
 		User:     cmp.Or(os.Getenv("POSTGRES_USER"), "postgres"),
-		Password: os.Getenv("POSTGRES_PASSWORD"),
+		Password: cmp.Or(os.Getenv("POSTGRES_PASSWORD"), os.Getenv("PGPASSWORD")),
 		Host:     cmp.Or(os.Getenv("POSTGRES_HOST"), "localhost"),
 		Port:     uint16(port),
 		Database: cmp.Or(os.Getenv("POSTGRES_DB"), "domonda"),
