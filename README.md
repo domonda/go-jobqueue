@@ -257,11 +257,22 @@ period:
 err := jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, time.Minute)
 ```
 
-`deadFor` must be at least `2 × jobworker.HeartbeatInterval` (the call returns an error
+`deadFor` must be at least `3 × jobworker.HeartbeatInterval` (the call returns an error
 otherwise). A worker keeps its heartbeat alive for as long as it owns a job — including while its
 retry scheduler runs — so the reaper only ever resets provably-dead jobs and is safe to run on
 every process's startup even while other processes are actively working. Plain `InitJobQueue`
 performs no reset.
+
+> **Heartbeats must be enabled for in-progress crash recovery.** With `jobworker.HeartbeatInterval`
+> set to `0`, a claimed job's `worker_alive_at` stays NULL, so there is no liveness signal and the
+> reaper cannot tell a crashed worker from a slow one — a job that was started but never stopped is
+> therefore **never** reclaimed (only jobs already marked errored with retries remaining are). This
+> is a deliberate trade-off to avoid double-executing a long-running job that has no heartbeat. The
+> previous `InitJobQueueResetDanglingJobs`, which reset every started-but-not-stopped job on startup,
+> has been removed because it was unsafe with multiple worker processes. If you ran heartbeats-off
+> with a single worker process and relied on that behavior, either keep heartbeats enabled, or reset
+> abandoned jobs yourself (e.g. `GetAllJobsStartedBefore` + `ResetJobs` once you know no worker is
+> running).
 
 > **Rolling upgrade:** a worker running a version older than this one still marks a job errored
 > *before* running its retry scheduler, leaving a brief window with no live heartbeat. Until every

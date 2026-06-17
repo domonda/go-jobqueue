@@ -204,11 +204,14 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 
 	// Retryable: run the (possibly slow) retry scheduler while the heartbeat is
 	// still alive, so the job stays claimed-and-live and no other process can
-	// reclaim it. Only once the next start time is known is the heartbeat stopped
-	// and the job moved to the scheduled-retry state by a single ScheduleRetry
-	// write — the job is never put into a separate stopped+errored state, so there
-	// is no SetJobError→ScheduleRetry window for another process's reaper to
-	// exploit.
+	// reclaim it. On the happy path, only once the next start time is known is the
+	// heartbeat stopped and the job moved to the scheduled-retry state by a single
+	// ScheduleRetry write — the job is never put into a separate stopped+errored
+	// state, so there is no SetJobError→ScheduleRetry window for another process's
+	// reaper to exploit. The two error branches below (no scheduler / scheduler
+	// error) instead record a TERMINAL failure via SetJobError, which clamps the
+	// retry count so the job is counted in its bundle and is not resurrected by
+	// the reaper's retries-remaining branch.
 	retrySchedulersMtx.RLock()
 	scheduleRetry, ok := retrySchedulers[job.Type]
 	retrySchedulersMtx.RUnlock()
@@ -221,8 +224,10 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 			Any("job", job).
 			Err(err).
 			Log()
-		// Can't reschedule: mark the job errored so the misconfiguration is
-		// visible and the job is reclaimable once a scheduler is registered.
+		// Can't reschedule: record a TERMINAL failure so the misconfiguration is
+		// visible and the job's bundle can still complete. SetJobError clamps the
+		// retry count, so the reaper will not resurrect this job. Re-register a
+		// scheduler and ResetJob the job to retry it.
 		if setErr := db.SetJobError(context.WithoutCancel(ctx), job.ID, errorMsg, job.ErrorData); setErr != nil {
 			OnError(setErr)
 		}
@@ -238,8 +243,10 @@ func doJobAndSaveResultInDB(ctx context.Context, job *jobqueue.Job) (err error) 
 			Any("job", job).
 			Err(err).
 			Log()
-		// Couldn't compute the next start: mark the job errored so the failure is
-		// visible and reclaimable rather than leaving it silently in-progress.
+		// Couldn't compute the next start: record a TERMINAL failure so the failure
+		// is visible and the job's bundle can still complete, rather than leaving
+		// it silently in-progress. SetJobError clamps the retry count, so the
+		// reaper will not resurrect this job; ResetJob it to retry once fixed.
 		if setErr := db.SetJobError(context.WithoutCancel(ctx), job.ID, errorMsg, job.ErrorData); setErr != nil {
 			OnError(setErr)
 		}

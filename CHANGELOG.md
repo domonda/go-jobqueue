@@ -18,12 +18,13 @@ Worker liveness heartbeat and safe, multi-process crash recovery.
   `stopped_at` is still NULL marks a job abandoned by a crashed worker.
 - **`jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, deadFor)`** — the
   multi-process-safe reaper. On startup it resets only jobs whose worker is
-  *provably* dead (heartbeat stale by ≥ `deadFor`, or stuck between
-  `SetJobError` and `ScheduleRetry` with a `stopped_at` older than `deadFor`).
+  *provably* dead (heartbeat stale by ≥ `deadFor`, or a pre-heartbeat worker
+  left a job stuck between `SetJobError` and `ScheduleRetry` during a rolling
+  upgrade, with a `stopped_at` older than `deadFor`).
   The cutoff is evaluated with the database clock, so it is immune to clock skew
   between worker processes and safe to run on every process's startup. Returns
   an error if `deadFor <= 0`, or — when heartbeats are enabled — if `deadFor` is
-  not at least `2 × jobworker.HeartbeatInterval`.
+  not at least `3 × jobworker.HeartbeatInterval`.
 - **`jobqueue.Job.WorkerAlive(deadFor)`** and **`jobqueue.Job.StartedAndNotStopped()`**
   predicate helpers. `WorkerAlive` compares the in-memory `WorkerAliveAt`
   snapshot against the local process clock; for an authoritative, skew-immune
@@ -50,6 +51,13 @@ Worker liveness heartbeat and safe, multi-process crash recovery.
 - **BREAKING (API):** the `jobworker.DataBase` interface now requires the new
   `SetJobWorkerAlive(ctx, jobID)` method. Custom `DataBase` implementations must
   add it; `jobworkerdb` already provides it.
+- **BREAKING (behavior):** `SetJobError` now records a *terminal* failure: it
+  clamps `current_retry_count` up to `max_retry_count`. A job whose type has no
+  registered retry scheduler (or whose scheduler errors) is therefore failed
+  permanently and counted in its bundle, instead of being left
+  stopped-with-retries-remaining — a state that previously stalled bundle
+  completion and was reset and re-run by the reaper on every startup. To retry
+  such a job after fixing the configuration, `ResetJob` it.
 - `worker_alive_at` is intentionally left unindexed so the per-heartbeat rewrite
   keeps using Postgres HOT updates.
 - Test database password retrieval now supports `PGPASSWORD`.
@@ -61,6 +69,15 @@ Worker liveness heartbeat and safe, multi-process crash recovery.
   on startup) was unsafe with multiple worker processes, where another process
   may still be running the job. Use `InitJobQueueResetInterruptedJobs(ctx, deadFor)`,
   which reclaims only jobs whose worker is provably dead, instead.
+
+  **Caveat for heartbeats-off setups:** the new reaper relies on the
+  `worker_alive_at` heartbeat to detect a crashed worker. With
+  `jobworker.HeartbeatInterval = 0` there is no liveness signal, so a job that
+  was started but never stopped is **not** reclaimed (only jobs already errored
+  with retries remaining are). If you ran a single worker process with heartbeats
+  disabled and relied on `InitJobQueueResetDanglingJobs`, either keep heartbeats
+  enabled or reset abandoned jobs yourself (e.g. `GetAllJobsStartedBefore` +
+  `ResetJobs` once no worker is running).
 
 ### Migration
 

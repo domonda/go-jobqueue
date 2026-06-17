@@ -97,11 +97,20 @@ Jobs abandoned by a crashed worker are reclaimed by
 jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, deadFor), which only resets
 jobs whose worker is provably dead: its heartbeat stale by more than deadFor, or,
 for a job that failed but was not yet rescheduled, stopped more than deadFor ago.
-As long as deadFor is at least 2 × HeartbeatInterval, a live worker stays ahead
+As long as deadFor is at least 3 × HeartbeatInterval, a live worker stays ahead
 of that window — its heartbeat keeps advancing for as long as it owns the job,
 including while its retry scheduler runs — so this is safe to run on every
 process's startup even while other processes are actively working. Plain
 jobworkerdb.InitJobQueue performs no reset.
+
+In-progress crash recovery requires heartbeats to be enabled. With
+jobworker.HeartbeatInterval set to 0 a claimed job's worker_alive_at stays NULL,
+so the reaper cannot distinguish a crashed worker from a slow one and never
+reclaims a started-but-not-stopped job (only jobs already marked errored with
+retries remaining). The previous InitJobQueueResetDanglingJobs, which reset every
+started-but-not-stopped job on startup, has been removed as unsafe with multiple
+worker processes; heartbeats-off single-process setups must keep heartbeats
+enabled or reset abandoned jobs themselves.
 
 # Context Support
 

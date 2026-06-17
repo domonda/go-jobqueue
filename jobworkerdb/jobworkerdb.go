@@ -483,13 +483,28 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
-		// update job
+		// SetJobError records a TERMINAL failure: the job has stopped and will
+		// not be retried. current_retry_count is clamped up to max_retry_count so
+		// the stopped+errored row is unambiguously terminal.
+		//
+		// This clamp is load-bearing for the startup reaper
+		// (resetInterruptedRetryableJobs): the reaper treats a stopped, errored
+		// job with current_retry_count < max_retry_count as a crash leftover (a
+		// worker that died between SetJobError and ScheduleRetry on an older,
+		// pre-heartbeat version) and resets it. A worker on this version only
+		// calls SetJobError once it is done retrying — retries exhausted, or a
+		// missing/failing retry scheduler (see doJobAndSaveResultInDB) — so
+		// clamping keeps the reaper's retries-remaining branch reserved for
+		// genuine rolling-upgrade leftovers. Without it, a job with a missing
+		// retry scheduler would be reset and re-run on every startup forever and
+		// its bundle would never complete (it would never be counted below).
 		err = db.Exec(ctx,
 			/*sql*/ `
 				update worker.job
 				set stopped_at=now(),
 					error_msg=$1,
 					error_data=$2,
+					current_retry_count=max_retry_count,
 					worker_alive_at=null,
 					updated_at=now()
 				where id = $3
@@ -502,44 +517,37 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 			return err
 		}
 
-		// Only increment the bundle's num_jobs_stopped counter
-		// when the job is truly done (no retries remaining).
-		// Jobs that will be retried (via ScheduleRetry or ResetJob)
-		// must not increment the counter here, otherwise the counter
-		// gets incremented again when the retry completes, which
-		// violates the CHECK(num_jobs_stopped <= num_jobs) constraint
-		// and causes premature bundle completion.
-		var jobBundleID uu.ID
-		err = db.QueryRow(ctx,
+		// Count the job in its bundle. SetJobError is always terminal (the clamp
+		// above guarantees current_retry_count >= max_retry_count), so a bundled
+		// job is counted exactly once here; ResetJob/ResetJobs decrement it again
+		// if the job is later reset. `for update` (blocking, not skip locked) is
+		// used because every completion must update the one shared bundle row.
+		jobBundleID, err := db.QueryRowAsOr(ctx,
+			uu.IDNull,
 			/*sql*/ `
 				select b.id
 				from worker.job_bundle as b
 				inner join worker.job as j on j.bundle_id = b.id
 				where j.id = $1
-					and j.current_retry_count >= j.max_retry_count
 				for update
 			`,
 			jobID, // $1
-		).Scan(&jobBundleID)
-		if sqldb.ReplaceErrNoRows(err, nil) != nil {
+		)
+		if err != nil {
 			return err
 		}
-
-		if jobBundleID.Valid() {
-			err = db.Exec(ctx,
-				/*sql*/ `
-					update worker.job_bundle
-					set num_jobs_stopped=num_jobs_stopped+1, updated_at=now()
-					where id = $1
-				`,
-				jobBundleID, // $1
-			)
-			if err != nil {
-				return err
-			}
+		if jobBundleID.IsNull() {
+			return nil
 		}
 
-		return nil
+		return db.Exec(ctx,
+			/*sql*/ `
+				update worker.job_bundle
+				set num_jobs_stopped=num_jobs_stopped+1, updated_at=now()
+				where id = $1
+			`,
+			jobBundleID.Get(), // $1
+		)
 	})
 }
 

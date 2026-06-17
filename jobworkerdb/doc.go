@@ -23,7 +23,7 @@ The database connection must be set up before calling InitJobQueue:
 To additionally reclaim jobs that were abandoned by a worker that crashed at
 least deadFor ago, use [InitJobQueueResetInterruptedJobs]. It only resets jobs
 whose worker is provably dead, so — as long as deadFor is at least
-2 × jobworker.HeartbeatInterval — it is safe to run on startup even when multiple
+3 × jobworker.HeartbeatInterval — it is safe to run on startup even when multiple
 worker processes share the same database:
 
 	err := jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, deadFor)

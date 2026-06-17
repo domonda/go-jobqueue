@@ -157,10 +157,12 @@ func TestInitJobQueueResetInterruptedJobsValidatesDeadFor(t *testing.T) {
 		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, -time.Second))
 	})
 
-	t.Run("deadFor not larger than HeartbeatInterval is rejected", func(t *testing.T) {
-		// Default HeartbeatInterval is 10s; a 5s deadFor would reset live jobs.
+	t.Run("deadFor below 3×HeartbeatInterval is rejected", func(t *testing.T) {
+		// deadFor must be at least 3×HeartbeatInterval (one slow in-flight write
+		// plus one fully missed tick). Anything below that could reset live jobs.
 		require.Positive(t, jobworker.HeartbeatInterval)
-		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, jobworker.HeartbeatInterval))
 		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, jobworker.HeartbeatInterval/2))
+		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, jobworker.HeartbeatInterval))
+		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, 2*jobworker.HeartbeatInterval))
 	})
 }

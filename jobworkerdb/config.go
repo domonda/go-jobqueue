@@ -43,11 +43,17 @@ func InitJobQueue(ctx context.Context) (err error) {
 
 // minDeadForHeartbeatFactor is the minimum multiple of
 // jobworker.HeartbeatInterval that deadFor must reach (when heartbeats are
-// enabled) before a job is treated as abandoned. The factor leaves room for one
-// fully missed or delayed heartbeat write, so a live worker is never reset;
-// deadFor == HeartbeatInterval (or a hair above) would reap a worker that merely
-// skipped a single heartbeat.
-const minDeadForHeartbeatFactor = 2
+// enabled) before a job is treated as abandoned.
+//
+// The factor is 3 because two separate slips can stack up between two
+// successfully persisted heartbeats: the per-write context timeout is itself a
+// full HeartbeatInterval (see startJobHeartbeat), so one in-flight write can
+// consume an entire interval before it is even retried, and on top of that a
+// single tick can be fully missed (GC pause, DB latency, scheduler jitter). A
+// factor of 2 only covers one of those and leaves a live worker reapable when a
+// slow write coincides with a missed tick; 3 leaves room for both, so a live
+// worker is never reset out from under itself.
+const minDeadForHeartbeatFactor = 3
 
 // InitJobQueueResetInterruptedJobs calls InitJobQueue and additionally resets
 // retryable jobs that were abandoned by a worker that crashed at least deadFor
@@ -73,9 +79,11 @@ func InitJobQueueResetInterruptedJobs(ctx context.Context, deadFor time.Duration
 	// The heartbeat-staleness branch of the reaper presumes a worker dead once its
 	// worker_alive_at is older than deadFor. A live worker refreshes worker_alive_at
 	// every HeartbeatInterval, so deadFor must span several intervals: requiring a
-	// margin (not just deadFor > HeartbeatInterval) absorbs a missed or delayed
-	// heartbeat write — caused by GC pauses, DB latency or scheduler jitter — so a
-	// live worker is never reset out from under itself.
+	// margin (not just deadFor > HeartbeatInterval) absorbs a slow in-flight write
+	// (each write may take up to a full HeartbeatInterval before it is retried) AND
+	// a fully missed tick — caused by GC pauses, DB latency or scheduler jitter —
+	// so a live worker is never reset out from under itself. See
+	// minDeadForHeartbeatFactor for why the margin is 3×.
 	//
 	// When heartbeats are disabled (HeartbeatInterval <= 0) worker_alive_at stays
 	// NULL at claim time and the heartbeat-staleness branch is inert, so this margin
@@ -129,13 +137,15 @@ func InitJobQueueResetInterruptedJobs(ctx context.Context, deadFor time.Duration
 //     them as started-but-stale so this branch reclaims them.
 //   - Errored with retries remaining but never rescheduled: marked errored
 //     (stopped_at and error_msg set) while current_retry_count < max_retry_count.
-//     The owning worker is already gone — the retry scheduler runs while the job
-//     is still claimed (see doJobAndSaveResultInDB), so a job reaches this state
-//     only after its worker returns (a missing or failing retry scheduler), or it
-//     was left here by a pre-heartbeat worker during a rolling upgrade. stopped_at
-//     records when it last ran; if that was at least deadFor ago the worker is
-//     gone. Genuine final failures (current_retry_count >= max_retry_count) are
-//     left untouched.
+//     A worker on this version never leaves a job here: the happy retry path uses
+//     ScheduleRetry (no stopped+errored window), and the error branches call
+//     SetJobError, which clamps current_retry_count up to max_retry_count (a
+//     terminal failure, excluded below). So this branch only matches a job left
+//     by a pre-heartbeat worker during a rolling upgrade, which marked the job
+//     errored before running its retry scheduler and then died before
+//     rescheduling. stopped_at records when it last ran; if that was at least
+//     deadFor ago the worker is gone. Genuine final failures
+//     (current_retry_count >= max_retry_count) are left untouched.
 //
 // The deadFor cutoff is evaluated entirely with the database clock
 // (now() - interval) rather than the app-server clock, so the comparison against
@@ -166,7 +176,10 @@ func resetInterruptedRetryableJobs(ctx context.Context, deadFor time.Duration) (
 						)
 						or
 						(
-							-- Crashed between SetJobError and ScheduleRetry.
+							-- Pre-heartbeat worker (rolling upgrade) that crashed
+							-- between SetJobError and ScheduleRetry. Current-version
+							-- SetJobError clamps current_retry_count to
+							-- max_retry_count, so it never lands here.
 							stopped_at is not null
 							and error_msg is not null
 							and current_retry_count < max_retry_count
