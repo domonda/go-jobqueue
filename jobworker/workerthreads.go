@@ -11,6 +11,8 @@ import (
 	"github.com/domonda/go-jobqueue"
 )
 
+// JobType identifies a kind of job. It is an alias for string so that job type
+// string literals can be used directly as map keys and function arguments.
 type JobType = string
 
 var (

@@ -30,6 +30,7 @@ var (
 	typeOfContext = reflect.TypeFor[context.Context]()
 )
 
+// OverrideLogger replaces the logger used by the jobworker package.
 func OverrideLogger(logger *golog.Logger) {
 	log = logger
 }

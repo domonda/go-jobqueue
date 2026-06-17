@@ -4,6 +4,7 @@ import (
 	"sync"
 )
 
+// JobStoppedListener is notified when a job has stopped.
 type JobStoppedListener interface {
 	// OnJobStopped is called when a job has stopped.
 	// willRetry indicates that the job will be retried
@@ -14,8 +15,10 @@ type JobStoppedListener interface {
 	OnJobStopped(job *Job, willRetry bool)
 }
 
+// JobStoppedListenerFunc adapts a plain function to the JobStoppedListener interface.
 type JobStoppedListenerFunc func(job *Job, willRetry bool)
 
+// OnJobStopped calls f, implementing JobStoppedListener.
 func (f JobStoppedListenerFunc) OnJobStopped(job *Job, willRetry bool) {
 	f(job, willRetry)
 }
@@ -25,6 +28,7 @@ var (
 	jobStoppedListenersMtx sync.RWMutex
 )
 
+// AddJobStoppedListener registers a listener that is called whenever a job stops.
 func AddJobStoppedListener(listener JobStoppedListener) {
 	jobStoppedListenersMtx.Lock()
 	defer jobStoppedListenersMtx.Unlock()
@@ -32,6 +36,8 @@ func AddJobStoppedListener(listener JobStoppedListener) {
 	jobStoppedListeners = append(jobStoppedListeners, listener)
 }
 
+// RemoveJobStoppedListener removes a listener previously registered with
+// AddJobStoppedListener. It does nothing if the listener is not registered.
 func RemoveJobStoppedListener(listener JobStoppedListener) {
 	jobStoppedListenersMtx.Lock()
 	defer jobStoppedListenersMtx.Unlock()
