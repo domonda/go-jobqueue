@@ -307,11 +307,17 @@ func TestSimulateJobs(t *testing.T) {
 	})
 }
 
+// PartialLogRecord is the subset of a JSON log record that the tests inspect.
 type PartialLogRecord struct {
-	Level   string `json:"level"`
-	Message string `json:"message"`
+	Level   string `json:"level"`   // Log level such as "ERROR"
+	Message string `json:"message"` // Log message text
 }
 
+// NewRegisteredJobWithWaiter registers workerFunc (and an optional retry
+// scheduler) for jobType, adds a single job with the given retryCount to the
+// queue, starts one worker thread, and returns the job together with a Waiter
+// that blocks until the job is finished. All registrations and threads are
+// cleaned up when the test ends.
 func NewRegisteredJobWithWaiter(
 	t *testing.T,
 	workerFunc jobworker.WorkerFunc,
@@ -354,6 +360,7 @@ func NewRegisteredJobWithWaiter(
 	return job, NewJobWaiter(t.Context(), t, jobID)
 }
 
+// NewJobWaiter returns a Waiter that polls the job with jobID until it is finished.
 func NewJobWaiter(ctx context.Context, t *testing.T, jobID uu.ID) *Waiter {
 	t.Helper()
 
@@ -368,12 +375,15 @@ func NewJobWaiter(ctx context.Context, t *testing.T, jobID uu.ID) *Waiter {
 	}
 }
 
+// Waiter polls a condition until it becomes true or a timeout elapses.
 type Waiter struct {
-	Check         func() bool
-	Timeout       time.Duration
-	PollFrequency time.Duration
+	Check         func() bool   // Condition polled until it returns true
+	Timeout       time.Duration // Maximum time to wait before giving up
+	PollFrequency time.Duration // Delay between successive Check calls
 }
 
+// Wait polls Check every PollFrequency until it returns true, or returns an
+// error if Timeout elapses first.
 func (w *Waiter) Wait() error {
 	start := time.Now()
 	for {

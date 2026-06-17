@@ -9,8 +9,13 @@ import (
 )
 
 const (
+	// ErrNotInitialized is returned by Service operations when no job queue
+	// service has been initialized. It is the error wrapped by the default
+	// service until SetDefaultService installs a real one.
 	ErrNotInitialized errs.Sentinel = "jobqueue service not initialized"
-	ErrClosed         errs.Sentinel = "jobqueue is closed"
+
+	// ErrClosed is returned by Service operations after the service has been closed.
+	ErrClosed errs.Sentinel = "jobqueue is closed"
 )
 
 var _ Service = errService{}
@@ -19,6 +24,10 @@ type errService struct {
 	err error
 }
 
+// ServiceWithError returns a Service whose every method returns the given err.
+// It is used as a placeholder default service before a real one is installed
+// with SetDefaultService, so that calls fail with a clear error such as
+// ErrNotInitialized instead of a nil pointer panic.
 func ServiceWithError(err error) Service {
 	return errService{err}
 }

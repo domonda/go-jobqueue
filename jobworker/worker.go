@@ -12,6 +12,9 @@ import (
 	"github.com/domonda/go-types/notnull"
 )
 
+// WorkerFunc processes a job and returns an optional result that is stored as
+// the job's result, or an error if processing failed. Register a WorkerFunc for
+// a job type with Register.
 type WorkerFunc func(ctx context.Context, job *jobqueue.Job) (result any, err error)
 
 // Register a Worker implementation for a jobType.
@@ -41,6 +44,7 @@ func IsRegistered(jobType string) bool {
 	return workers[jobType] != nil
 }
 
+// RegisteredJobTypes returns the job types that currently have a worker registered.
 func RegisteredJobTypes() notnull.StringArray {
 	workersMtx.RLock()
 	defer workersMtx.RUnlock()
@@ -188,6 +192,8 @@ func registerFunc(jobType string, workerFunc any) {
 // 	}))
 // }
 
+// Unregister removes the workers for the given job types,
+// or all registered workers if no job type is passed.
 func Unregister(jobTypes ...string) {
 	workersMtx.Lock()
 	defer workersMtx.Unlock()

@@ -28,16 +28,16 @@ import (
 type Job struct {
 	db.TableName `db:"worker.job"`
 
-	ID       uu.ID         `db:"id,primarykey" json:"id"`
-	BundleID uu.NullableID `db:"bundle_id"     json:"bundleId"`
+	ID       uu.ID         `db:"id,primarykey" json:"id"`       // Unique identifier of the job (primary key)
+	BundleID uu.NullableID `db:"bundle_id"     json:"bundleId"` // ID of the JobBundle this job belongs to, or NULL for a standalone job
 
-	Type              string        `db:"type"     json:"type"` // CHECK(length("type") > 0 AND length("type") <= 100)
-	Payload           notnull.JSON  `db:"payload"  json:"payload"`
-	Priority          int64         `db:"priority" json:"priority"`
-	Origin            string        `db:"origin"   json:"origin"` // CHECK(length(origin) > 0 AND length(origin) <= 100)
-	MaxRetryCount     int           `db:"max_retry_count"   json:"maxRetryCount"`
-	CurrentRetryCount int           `db:"current_retry_count"   json:"currentRetryCount"`
-	StartAt           nullable.Time `db:"start_at" json:"startAt"` // If not NULL, earliest time to start the job
+	Type              string        `db:"type"     json:"type"`                           // CHECK(length("type") > 0 AND length("type") <= 100)
+	Payload           notnull.JSON  `db:"payload"  json:"payload"`                        // Job input data as JSON, passed to the registered worker
+	Priority          int64         `db:"priority" json:"priority"`                       // Higher priorities are started before lower ones
+	Origin            string        `db:"origin"   json:"origin"`                         // CHECK(length(origin) > 0 AND length(origin) <= 100)
+	MaxRetryCount     int           `db:"max_retry_count"   json:"maxRetryCount"`         // Maximum number of retries before the job is considered finally failed
+	CurrentRetryCount int           `db:"current_retry_count"   json:"currentRetryCount"` // Number of retries already attempted
+	StartAt           nullable.Time `db:"start_at" json:"startAt"`                        // If not NULL, earliest time to start the job
 
 	StartedAt     nullable.Time `db:"started_at"      json:"startedAt"`     // Time when started working on the job, or NULL when not started
 	WorkerAliveAt nullable.Time `db:"worker_alive_at" json:"workerAliveAt"` // Heartbeat updated periodically while a worker processes the job, NULL when not being processed. A stale value while StoppedAt is NULL indicates the worker crashed.
@@ -47,14 +47,18 @@ type Job struct {
 	ErrorData nullable.JSON           `db:"error_data" json:"errorData"` // Optional error metadata
 	Result    nullable.JSON           `db:"result"     json:"result"`    // Result if the job returned one
 
-	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
-	CreatedAt time.Time `db:"created_at" json:"createdAt"`
+	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"` // Time the row was last updated
+	CreatedAt time.Time `db:"created_at" json:"createdAt"` // Time the job was created
 }
 
+// Started returns true if a worker has claimed the job and set its StartedAt
+// timestamp. May be stale after the snapshot was loaded.
 func (j *Job) Started() bool {
 	return j.StartedAt.IsNotNull()
 }
 
+// Stopped returns true if work on the job has stopped, because it finished,
+// errored, or paused for a decision. May be stale after the snapshot was loaded.
 func (j *Job) Stopped() bool {
 	return j.StoppedAt.IsNotNull()
 }
@@ -85,6 +89,10 @@ func (j *Job) WorkerAlive(deadFor time.Duration) bool {
 	return time.Since(j.WorkerAliveAt.Get()) <= deadFor
 }
 
+// IsFinished returns true if the job has stopped and will not be retried,
+// either because it succeeded (no ErrorMsg) or because it exhausted its retries
+// (CurrentRetryCount reached MaxRetryCount). May be stale after the snapshot was
+// loaded.
 func (j *Job) IsFinished() bool {
 	if !j.Stopped() {
 		return false
@@ -92,6 +100,8 @@ func (j *Job) IsFinished() bool {
 	return j.CurrentRetryCount >= j.MaxRetryCount || j.ErrorMsg.IsNull()
 }
 
+// Succeeded returns true if the job has finished without an error.
+// May be stale after the snapshot was loaded.
 func (j *Job) Succeeded() bool {
 	return j.IsFinished() && !j.HasError()
 }

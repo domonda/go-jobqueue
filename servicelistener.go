@@ -7,6 +7,9 @@ import (
 	"github.com/domonda/go-types/uu"
 )
 
+// ServiceListener receives job and job bundle completion events from a Service.
+// A Service forwards these events to the package-level job and job bundle
+// stopped listeners; see NewDefaultServiceListener for the standard implementation.
 type ServiceListener interface {
 	// OnJobStopped is called when a job has stopped.
 	// willRetry indicates that the job will be retried
@@ -15,9 +18,16 @@ type ServiceListener interface {
 	// reset for retry by the time the handler reads it from the database,
 	// so its state may no longer reflect the error that triggered this notification.
 	OnJobStopped(ctx context.Context, jobID uu.ID, jobType, jobOrigin string, willRetry bool)
+
+	// OnJobBundleStopped is called when every job in a job bundle has stopped.
 	OnJobBundleStopped(ctx context.Context, jobBundleID uu.ID, jobBundleType, jobBundleOrigin string)
 }
 
+// NewDefaultServiceListener returns the standard ServiceListener implementation.
+// It loads the affected job or job bundle from service and dispatches to the
+// listeners registered via AddJobStoppedListener, AddJobBundleStoppedListener,
+// and SetJobBundleOfTypeStoppedListener. A bundle that completed without errors
+// is deleted from the queue.
 func NewDefaultServiceListener(service Service) ServiceListener {
 	return defaultServiceListener{Service: service}
 }
