@@ -10,13 +10,11 @@ create table worker.job (
 
     max_retry_count     int not null default 0,
     current_retry_count int not null default 0,
+    start_at            timestamptz, -- If NOT NULL, earliest time to start the job
 
-    start_at   timestamptz, -- If NOT NULL, earliest time to start the job
-    started_at timestamptz, -- Time when started working on the job, or NULL when not started
-    stopped_at timestamptz, -- Time when working on job was stopped for any reason
-
-    -- issue_type text,  -- Type of the issue that has to be resolved before the job can continue
-    -- issue_data jsonb, -- Data about the issue that needs to be resolved
+    started_at      timestamptz, -- Time when started working on the job, or NULL when not started
+    worker_alive_at timestamptz, -- Heartbeat updated periodically while a worker processes the job; NULL when not being processed. A stale value while stopped_at IS NULL indicates the worker crashed.
+    stopped_at      timestamptz, -- Time when working on job was stopped for any reason
 
     error_msg  text,  -- If there was an error working off the job
     error_data jsonb, -- Optional error metadata
@@ -28,12 +26,19 @@ create table worker.job (
 
 comment on table worker.job IS 'A `Job` to be worked out later.';
 
-create index worker_job_type_idx     on worker.job("type");
-create index worker_job_start_at_idx on worker.job(start_at);
+-- Partial index on the bundle_id foreign key: serves GetJobBundle's
+-- `where bundle_id = $1` lookups and, more importantly, the ON DELETE CASCADE
+-- from worker.job_bundle (Postgres does not auto-index referencing columns, so
+-- without this every bundle delete seq-scans worker.job). Partial because
+-- bundle_id is NULL for all standalone jobs, which never participate in either.
+create index worker_job_bundle_id_idx  on worker.job(bundle_id) where bundle_id is not null;
+create index worker_job_type_idx       on worker.job("type");
+create index worker_job_start_at_idx   on worker.job(start_at);
 create index worker_job_started_at_idx on worker.job(started_at);
 create index worker_job_stopped_at_idx on worker.job(stopped_at);
-
--- Indices removed because payload may get larger than max 2712 bytes:
--- CREATE INDEX worker_job_payload_idx ON worker.job (payload);
--- CREATE INDEX worker_job_type_payload_start_at_idx ON worker.job ("type", payload, start_at);
+-- worker_alive_at is intentionally NOT indexed: the heartbeat rewrites it every
+-- HeartbeatInterval for each in-progress job, and indexing it would defeat
+-- Postgres HOT updates (an indexed column changing forces a new index entry
+-- every heartbeat) and bloat the index. Its only reader is the startup reaper
+-- (resetInterruptedRetryableJobs), a rare query that tolerates a scan.
 

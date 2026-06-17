@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/domonda/go-errs"
-	"github.com/domonda/go-jobqueue"
-	"github.com/domonda/go-jobqueue/jobworker"
 	"github.com/domonda/go-sqldb"
 	"github.com/domonda/go-sqldb/db"
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
+
+	"github.com/domonda/go-jobqueue"
+	"github.com/domonda/go-jobqueue/jobworker"
 )
 
 type jobworkerDB struct {
@@ -441,16 +442,32 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 
 		job.StartedAt.Set(now)
 		job.UpdatedAt = now
-		return db.Exec(ctx,
+		// Stamp worker_alive_at with the database clock (now()) rather than this
+		// process's clock, so the reaper's now()-based staleness comparison is
+		// immune to clock skew between worker processes and the database — even for
+		// a job that crashes before its first heartbeat tick. The written value is
+		// read back via RETURNING so the in-memory job matches the row.
+		//
+		// When heartbeats are disabled (HeartbeatInterval <= 0) worker_alive_at is
+		// deliberately left NULL: it would never advance, so a job that simply runs
+		// longer than deadFor would look crashed and be reset out from under a live
+		// worker (double execution). A NULL worker_alive_at makes the reaper's
+		// heartbeat-staleness branch (which requires worker_alive_at IS NOT NULL)
+		// inert, so disabled heartbeats mean no heartbeat-based reclamation.
+		return db.QueryRow(ctx,
 			/*sql*/ `
 				update worker.job
-				set started_at=$1, updated_at=$2
-				where id = $3
+				set started_at=$1,
+					worker_alive_at=case when $2 then now() else null end,
+					updated_at=$3
+				where id = $4
+				returning worker_alive_at
 			`,
-			job.StartedAt, // $1
-			job.UpdatedAt, // $2
-			job.ID,        // $3
-		)
+			job.StartedAt,                   // $1
+			jobworker.HeartbeatInterval > 0, // $2
+			job.UpdatedAt,                   // $3
+			job.ID,                          // $4
+		).Scan(&job.WorkerAliveAt)
 	})
 	if err != nil {
 		return nil, err
@@ -466,11 +483,30 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 	}
 
 	return db.Transaction(ctx, func(ctx context.Context) error {
-		// update job
+		// SetJobError records a TERMINAL failure: the job has stopped and will
+		// not be retried. current_retry_count is clamped up to max_retry_count so
+		// the stopped+errored row is unambiguously terminal.
+		//
+		// This clamp is load-bearing for the startup reaper
+		// (resetInterruptedRetryableJobs): the reaper treats a stopped, errored
+		// job with current_retry_count < max_retry_count as a crash leftover (a
+		// worker that died between SetJobError and ScheduleRetry on an older,
+		// pre-heartbeat version) and resets it. A worker on this version only
+		// calls SetJobError once it is done retrying — retries exhausted, or a
+		// missing/failing retry scheduler (see doJobAndSaveResultInDB) — so
+		// clamping keeps the reaper's retries-remaining branch reserved for
+		// genuine rolling-upgrade leftovers. Without it, a job with a missing
+		// retry scheduler would be reset and re-run on every startup forever and
+		// its bundle would never complete (it would never be counted below).
 		err = db.Exec(ctx,
 			/*sql*/ `
 				update worker.job
-				set stopped_at=now(), error_msg=$1, error_data=$2, updated_at=now()
+				set stopped_at=now(),
+					error_msg=$1,
+					error_data=$2,
+					current_retry_count=max_retry_count,
+					worker_alive_at=null,
+					updated_at=now()
 				where id = $3
 			`,
 			errorMsg,  // $1
@@ -481,44 +517,37 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 			return err
 		}
 
-		// Only increment the bundle's num_jobs_stopped counter
-		// when the job is truly done (no retries remaining).
-		// Jobs that will be retried (via ScheduleRetry or ResetJob)
-		// must not increment the counter here, otherwise the counter
-		// gets incremented again when the retry completes, which
-		// violates the CHECK(num_jobs_stopped <= num_jobs) constraint
-		// and causes premature bundle completion.
-		var jobBundleID uu.ID
-		err = db.QueryRow(ctx,
+		// Count the job in its bundle. SetJobError is always terminal (the clamp
+		// above guarantees current_retry_count >= max_retry_count), so a bundled
+		// job is counted exactly once here; ResetJob/ResetJobs decrement it again
+		// if the job is later reset. `for update` (blocking, not skip locked) is
+		// used because every completion must update the one shared bundle row.
+		jobBundleID, err := db.QueryRowAsOr(ctx,
+			uu.IDNull,
 			/*sql*/ `
 				select b.id
 				from worker.job_bundle as b
 				inner join worker.job as j on j.bundle_id = b.id
 				where j.id = $1
-					and j.current_retry_count >= j.max_retry_count
 				for update
 			`,
 			jobID, // $1
-		).Scan(&jobBundleID)
-		if sqldb.ReplaceErrNoRows(err, nil) != nil {
+		)
+		if err != nil {
 			return err
 		}
-
-		if jobBundleID.Valid() {
-			err = db.Exec(ctx,
-				/*sql*/ `
-					update worker.job_bundle
-					set num_jobs_stopped=num_jobs_stopped+1, updated_at=now()
-					where id = $1
-				`,
-				jobBundleID, // $1
-			)
-			if err != nil {
-				return err
-			}
+		if jobBundleID.IsNull() {
+			return nil
 		}
 
-		return nil
+		return db.Exec(ctx,
+			/*sql*/ `
+				update worker.job_bundle
+				set num_jobs_stopped=num_jobs_stopped+1, updated_at=now()
+				where id = $1
+			`,
+			jobBundleID.Get(), // $1
+		)
 	})
 }
 
@@ -566,6 +595,7 @@ func (j *jobworkerDB) ResetJob(ctx context.Context, jobID uu.ID) (err error) {
 					error_msg=null,
 					error_data=null,
 					result=null,
+					worker_alive_at=null,
 					current_retry_count=0,
 					updated_at=now()
 				where id = $1
@@ -618,6 +648,7 @@ func (j *jobworkerDB) ResetJobs(ctx context.Context, jobIDs uu.IDs) (err error) 
 					error_msg=null,
 					error_data=null,
 					result=null,
+					worker_alive_at=null,
 					current_retry_count=0,
 					updated_at=now()
 				where id = any($1)
@@ -643,7 +674,12 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 		err = db.Exec(ctx,
 			/*sql*/ `
 				update worker.job
-				set result=$1, stopped_at=now(), updated_at=now(), error_msg=null, error_data=null
+				set result=$1,
+					stopped_at=now(),
+					worker_alive_at=null,
+					updated_at=now(),
+					error_msg=null,
+					error_data=null
 				where id = $2
 			`,
 			result, // $1
@@ -709,11 +745,36 @@ func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time
 				stopped_at=null,
 				error_msg=null,
 				error_data=null,
+				worker_alive_at=null,
 				updated_at=now()
 			where id = $2
 		`,
 		startAt, // $1
 		jobID,   // $2
+	)
+}
+
+func (j *jobworkerDB) SetJobWorkerAlive(ctx context.Context, jobID uu.ID) (err error) {
+	defer errs.WrapWithFuncParams(&err, ctx, jobID)
+
+	if j.closed.Load() {
+		return jobqueue.ErrClosed
+	}
+
+	// Only update worker_alive_at while the job is actually being processed
+	// (claimed but not yet stopped). The guard prevents a heartbeat that
+	// races with job completion from resurrecting worker_alive_at on a stopped
+	// job. updated_at is bumped together with worker_alive_at so every UPDATE of
+	// worker.job advances updated_at.
+	return db.Exec(ctx,
+		/*sql*/ `
+			update worker.job
+			set worker_alive_at=now(), updated_at=now()
+			where id = $1
+				and started_at is not null
+				and stopped_at is null
+		`,
+		jobID, // $1
 	)
 }
 
@@ -733,6 +794,7 @@ func (j *jobworkerDB) ScheduleRetry(ctx context.Context, jobID uu.ID, startAt ti
 				stopped_at=null,
 				error_msg=null,
 				error_data=null,
+				worker_alive_at=null,
 				current_retry_count=$2,
 				updated_at=now()
 			where id = $3

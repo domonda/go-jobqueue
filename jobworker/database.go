@@ -26,6 +26,10 @@ type DataBase interface {
 	SetJobResult(ctx context.Context, jobID uu.ID, result nullable.JSON) error
 	SetJobStart(ctx context.Context, jobID uu.ID, startAt time.Time) error
 
+	// SetJobWorkerAlive updates the worker_alive_at heartbeat timestamp of a job
+	// that is currently being processed.
+	SetJobWorkerAlive(ctx context.Context, jobID uu.ID) error
+
 	ScheduleRetry(ctx context.Context, jobID uu.ID, startAt time.Time, retryCount int) error
 
 	DeleteJobsFromOrigin(ctx context.Context, origin string) error

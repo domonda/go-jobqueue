@@ -25,7 +25,13 @@ Three packages with clear layering:
 
 ### Service wiring
 
-`jobworkerdb.InitJobQueue(ctx)` (or `InitJobQueueResetDanglingJobs`) creates the DB-backed service, registers it as default for both `jobqueue` and `jobworker`, sets up LISTEN/NOTIFY listeners, and resets interrupted retryable jobs.
+`jobworkerdb.InitJobQueue(ctx)` (or `InitJobQueueResetInterruptedJobs(ctx, deadFor)`, which additionally resets jobs abandoned by a worker that crashed at least `deadFor` ago) creates the DB-backed service, registers it as default for both `jobqueue` and `jobworker`, and sets up LISTEN/NOTIFY listeners.
+
+### Worker liveness heartbeat
+
+While a worker processes a job, `jobworker` runs a goroutine (started in `doJobAndSaveResultInDB`) that updates `worker.job.worker_alive_at` every `jobworker.HeartbeatInterval` (default 10s) via `DataBase.SetJobWorkerAlive`. `worker_alive_at` is set on job claim (only when heartbeats are enabled), cleared on every stop/reset/retry transition, and stopped synchronously when the job ends. A job that is started but not stopped and whose `worker_alive_at` is stale was abandoned by a crashed worker — see `jobqueue.Job.WorkerAlive(deadFor)`. With heartbeats disabled (`HeartbeatInterval <= 0`) `worker_alive_at` stays NULL at claim, so the heartbeat-staleness reset branch is inert and no in-progress job is reclaimed (avoids resetting a still-running long job that has no liveness signal).
+
+`InitJobQueueResetInterruptedJobs(ctx, deadFor)` is the multi-process-safe reaper: it only resets jobs whose worker is provably dead (`worker_alive_at` stale by ≥ `deadFor` for in-progress jobs, or `stopped_at` older than `deadFor` for jobs a *pre-heartbeat* worker left stuck between `SetJobError` and `ScheduleRetry` during a rolling upgrade — current-version `SetJobError` clamps `current_retry_count` to `max_retry_count`, making such failures terminal so the reaper never resurrects them). The `deadFor` cutoff is evaluated with the DB clock (`now() - make_interval`) so it is immune to clock skew between worker processes. A live worker keeps `worker_alive_at` fresh and finishes its error→retry transition well within `deadFor` (with a fast retry scheduler), so its jobs never fall inside the `deadFor` window and are never rug-pulled. `deadFor` must be comfortably larger than `HeartbeatInterval` (plus any retry-scheduler delay); `InitJobQueueResetInterruptedJobs` returns an error if `deadFor < 3 × HeartbeatInterval` (when heartbeats are enabled) or `deadFor <= 0`.
 
 ### Database schema
 
@@ -53,3 +59,22 @@ Follow the conventions from the parent project (domonda-service):
 - Prefix SQL string literals with `/*sql*/` and use backticks
 - Use `github.com/stretchr/testify/require` and `assert` for tests
 - Use `t.Context()` instead of `context.Background()` in tests
+
+## Skill routing
+
+When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
+
+Key routing rules:
+- Product ideas/brainstorming → invoke /office-hours
+- Strategy/scope → invoke /plan-ceo-review
+- Architecture → invoke /plan-eng-review
+- Design system/plan review → invoke /design-consultation or /plan-design-review
+- Full review pipeline → invoke /autoplan
+- Bugs/errors → invoke /investigate
+- QA/testing site behavior → invoke /qa or /qa-only
+- Code review/diff check → invoke /review
+- Visual polish → invoke /design-review
+- Ship/deploy/PR → invoke /ship or /land-and-deploy
+- Save progress → invoke /context-save
+- Resume context → invoke /context-restore
+- Author a backlog-ready spec/issue → invoke /spec

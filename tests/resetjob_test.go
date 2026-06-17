@@ -314,3 +314,77 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 		assert.Equal(t, 0, b.NumJobsStopped, "counter should still be 0 after resetting uncounted job")
 	})
 }
+
+// TestSetJobErrorTerminalForMissingScheduler is a regression test: a retryable
+// job whose type has NO registered retry scheduler must fail TERMINALLY rather
+// than being left stopped-with-retries-remaining. Before the fix, SetJobError
+// left current_retry_count < max_retry_count, which (a) never incremented the
+// bundle's num_jobs_stopped counter, so the bundle could never complete, and
+// (b) matched the startup reaper's retries-remaining branch, so the job was
+// reset and re-run on every startup forever. SetJobError now clamps
+// current_retry_count to max_retry_count, making the failure terminal and
+// counted.
+func TestSetJobErrorTerminalForMissingScheduler(t *testing.T) {
+	// Close any previous service to unlisten channels before re-initializing.
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+	ctx := t.Context()
+
+	jobType := "test-missing-scheduler-terminal-type"
+
+	// Worker always fails; deliberately no RegisterScheduleRetry for jobType, so
+	// doJobAndSaveResultInDB takes the "no retry scheduler" branch.
+	jobworker.Register(jobType, func(ctx context.Context, job *jobqueue.Job) (any, error) {
+		return nil, errors.New("intentional failure")
+	})
+	t.Cleanup(func() { jobworker.Unregister(jobType) })
+
+	bundleID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000031")
+	jobID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000032")
+
+	// max_retry_count = 3, so the job starts with retries remaining.
+	job, err := jobqueue.NewJob(jobID, jobType, "test-missing-scheduler", "{}", nullable.Time{}, 3)
+	require.NoError(t, err)
+
+	bundle := &jobqueue.JobBundle{
+		ID:      bundleID,
+		Type:    "test-missing-scheduler-bundle",
+		Origin:  "test",
+		NumJobs: 1,
+		Jobs:    []*jobqueue.Job{job},
+	}
+	require.NoError(t, jobqueue.AddBundle(ctx, bundle))
+	t.Cleanup(func() {
+		bg := context.Background()
+		jobqueue.GetService(bg).DeleteJobBundle(bg, bundleID)
+		jobqueue.DeleteJob(bg, jobID)
+	})
+
+	require.NoError(t, jobworker.StartThreads(ctx, 1))
+	t.Cleanup(func() { jobworker.FinishThreads(context.Background()) })
+
+	// Wait until the job has stopped with an error.
+	stopped := &Waiter{
+		Check: func() bool {
+			j, err := jobqueue.GetJob(ctx, jobID)
+			return err == nil && j.Stopped() && j.HasError()
+		},
+		Timeout:       5 * time.Second,
+		PollFrequency: 50 * time.Millisecond,
+	}
+	require.NoError(t, stopped.Wait())
+
+	j, err := jobqueue.GetJob(ctx, jobID)
+	require.NoError(t, err)
+	assert.True(t, j.Stopped(), "job should be stopped")
+	assert.True(t, j.HasError(), "job should be errored")
+	assert.Equal(t, j.MaxRetryCount, j.CurrentRetryCount,
+		"SetJobError must clamp current_retry_count to max_retry_count (terminal failure)")
+	assert.True(t, j.WorkerAliveAt.IsNull(), "worker_alive_at should be cleared")
+
+	// The bundle must count this terminal failure so the bundle can complete.
+	b, err := jobqueue.GetJobBundle(ctx, bundleID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, b.NumJobsStopped, "a terminal failure must be counted in its bundle")
+}
