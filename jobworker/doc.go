@@ -77,6 +77,18 @@ Jobs are executed by calling DoJob, which:
 4. Sets job.Result or job.ErrorMsg based on the outcome
 5. Logs execution details
 
+# Worker Liveness Heartbeat
+
+While a worker processes a job, jobworker runs a background goroutine that
+updates the job's worker_alive_at timestamp every HeartbeatInterval (default
+10 seconds; set to 0 to disable). If the worker process crashes the goroutine
+dies with it and worker_alive_at stops advancing, so a stale heartbeat marks a
+job abandoned by a crashed worker (see jobqueue.Job.WorkerAlive).
+
+This lets abandoned jobs be reclaimed safely even when multiple worker
+processes share one database; see
+jobworkerdb.InitJobQueueResetInterruptedJobs.
+
 # Polling
 
 For environments where PostgreSQL LISTEN/NOTIFY isn't reliable, use polling:

@@ -12,6 +12,19 @@ import (
 	"github.com/domonda/go-types/uu"
 )
 
+// Job is an in-memory snapshot of a worker.job row as it was read from the
+// database. Its predicate methods (Started, Stopped, StartedAndNotStopped,
+// IsFinished, Succeeded, HasError, WorkerAlive) evaluate this snapshot and do
+// NOT re-query the database for the current state — a concurrently running
+// worker (in this or another process) may have moved the job on since it was
+// loaded.
+//
+// In particular, WorkerAlive compares WorkerAliveAt against the local process
+// clock (time.Since) on the snapshot; it performs no database access, so its
+// result depends on the caller's clock agreeing with the database clock that
+// wrote WorkerAliveAt. For an authoritative, skew-immune liveness decision use
+// the database-side reaper jobworkerdb.InitJobQueueResetInterruptedJobs, which
+// compares the stored timestamps against the database now().
 type Job struct {
 	db.TableName `db:"worker.job"`
 
@@ -26,8 +39,9 @@ type Job struct {
 	CurrentRetryCount int           `db:"current_retry_count"   json:"currentRetryCount"`
 	StartAt           nullable.Time `db:"start_at" json:"startAt"` // If not NULL, earliest time to start the job
 
-	StartedAt nullable.Time `db:"started_at" json:"startedAt"` // Time when started working on the job, or NULL when not started
-	StoppedAt nullable.Time `db:"stopped_at" json:"stoppedAt"` // Time when working on job was stoped because of a decision question or an error, or NULL
+	StartedAt     nullable.Time `db:"started_at"      json:"startedAt"`     // Time when started working on the job, or NULL when not started
+	WorkerAliveAt nullable.Time `db:"worker_alive_at" json:"workerAliveAt"` // Heartbeat updated periodically while a worker processes the job, NULL when not being processed. A stale value while StoppedAt is NULL indicates the worker crashed.
+	StoppedAt     nullable.Time `db:"stopped_at"      json:"stoppedAt"`     // Time when working on job was stoped because of a decision question or an error, or NULL
 
 	ErrorMsg  nullable.NonEmptyString `db:"error_msg"  json:"errorMsg"`  // If there was an error working off the job
 	ErrorData nullable.JSON           `db:"error_data" json:"errorData"` // Optional error metadata
@@ -43,6 +57,32 @@ func (j *Job) Started() bool {
 
 func (j *Job) Stopped() bool {
 	return j.StoppedAt.IsNotNull()
+}
+
+// StartedAndNotStopped returns true if a worker has claimed the job
+// and is working on it (started but not yet stopped).
+// May be stale after worker process has crashed.
+func (j *Job) StartedAndNotStopped() bool {
+	return j.Started() && !j.Stopped()
+}
+
+// WorkerAlive reports whether the worker processing this job is considered
+// alive, based on deadFor as the maximum allowed age of the last heartbeat
+// (WorkerAliveAt). It returns false if the job is not currently being
+// processed. A job that is being processed but whose last heartbeat is older
+// than deadFor was most likely abandoned by a crashed worker.
+//
+// The age is computed from this Job's in-memory WorkerAliveAt field against the
+// local process clock (time.Since), not from a live database query. Because
+// WorkerAliveAt was written with the database clock, the result is only accurate
+// to the extent the calling process's clock matches the database's; under clock
+// skew it can be off. For a skew-immune decision use the database-side reaper
+// (jobworkerdb.InitJobQueueResetInterruptedJobs), which compares against now().
+func (j *Job) WorkerAlive(deadFor time.Duration) bool {
+	if !j.Started() || j.Stopped() || j.WorkerAliveAt.IsNull() {
+		return false
+	}
+	return time.Since(j.WorkerAliveAt.Get()) <= deadFor
 }
 
 func (j *Job) IsFinished() bool {

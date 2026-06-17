@@ -12,6 +12,7 @@ Go package for a PostgreSQL-backed job queue with support for job bundles, retri
 - **Deferred Execution**: Schedule jobs to start at a specific time
 - **Context Support**: Full context.Context support throughout the API
 - **Thread Pool**: Configurable worker thread pool for concurrent job processing
+- **Crash Recovery**: Worker liveness heartbeats let jobs abandoned by a crashed worker be reclaimed safely, even with multiple worker processes sharing one database
 
 ## Installation
 
@@ -41,9 +42,10 @@ func main() {
     // Initialize database connection
     db.SetConn(yourPostgresConnection)
 
-    // Initialize the job queue service, registers it as the default
-    // for both jobqueue and jobworker packages, and resets any
-    // jobs interrupted by a previous shutdown or crash.
+    // Initialize the job queue service and register it as the default
+    // for both the jobqueue and jobworker packages. InitJobQueue does
+    // not reset any jobs. To also reclaim jobs abandoned by a crashed
+    // worker, use jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, deadFor).
     err := jobworkerdb.InitJobQueue(ctx)
     if err != nil {
         log.Fatal(err)
@@ -236,6 +238,60 @@ if err != nil {
 }
 ```
 
+### Crash Recovery & Multiple Worker Processes
+
+Worker pools can run in multiple processes against the same database — this is how you scale
+horizontally. Each process calls `jobworker.StartThreads` independently and they all compete for
+the same queue; every job is claimed atomically (`SELECT ... FOR UPDATE SKIP LOCKED`), so two
+workers never pick up the same available job at once. (A failed job is still retried, and a job
+abandoned by a crashed worker is reclaimed, but never run concurrently.)
+
+While a worker processes a job it advances the job's `worker_alive_at` heartbeat every
+`jobworker.HeartbeatInterval` (default 10s). If that worker crashes, the heartbeat goes stale.
+
+To reclaim jobs abandoned by a crashed worker, initialize with the reaper variant and a grace
+period:
+
+```go
+// Reset jobs whose worker has been silent for at least 1 minute.
+err := jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, time.Minute)
+```
+
+`deadFor` must be at least `2 × jobworker.HeartbeatInterval` (the call returns an error
+otherwise). A worker keeps its heartbeat alive for as long as it owns a job — including while its
+retry scheduler runs — so the reaper only ever resets provably-dead jobs and is safe to run on
+every process's startup even while other processes are actively working. Plain `InitJobQueue`
+performs no reset.
+
+> **Rolling upgrade:** a worker running a version older than this one still marks a job errored
+> *before* running its retry scheduler, leaving a brief window with no live heartbeat. Until every
+> process runs this version, also keep `deadFor` larger than your slowest retry scheduler so that
+> window can't be reset out from under an old worker.
+
+**Upgrading an existing database:** run these out-of-band before deploying this code. The
+`select *` into `jobqueue.Job` requires the new column, and the fresh-install schema also adds a
+partial index on the `bundle_id` foreign key that an upgraded database is missing:
+
+```sql
+alter table worker.job add column if not exists worker_alive_at timestamptz;
+
+create index concurrently if not exists worker_job_bundle_id_idx
+    on worker.job(bundle_id) where bundle_id is not null;
+```
+
+Jobs mid-execution at upgrade time have a NULL `worker_alive_at`, which the reaper's in-progress
+branch skips (it only resets jobs with a stale, non-NULL heartbeat). Backfilling
+`worker_alive_at = started_at` as part of the migration is **mandatory** — otherwise they stay stuck
+started-but-not-stopped forever. `started_at` predates the restart, so the value is already stale and
+`InitJobQueueResetInterruptedJobs` reclaims these jobs like any other abandoned job, subject to its
+`deadFor` grace period:
+
+```sql
+update worker.job
+set worker_alive_at=started_at, updated_at=now()
+where started_at is not null and stopped_at is null and worker_alive_at is null;
+```
+
 ### Queue Management
 
 ```go
@@ -307,7 +363,7 @@ ctx = jobworkerdb.ContextWithIgnoreJobBundle(ctx, jobworkerdb.IgnoreAllJobBundle
 
 The package uses the `worker` schema in PostgreSQL:
 
-- `worker.job`: Individual jobs with type, payload, priority, and status
+- `worker.job`: Individual jobs with type, payload, priority, status, and a `worker_alive_at` liveness heartbeat
 - `worker.job_bundle`: Job bundles grouping multiple jobs
 - Database triggers: Automatic PostgreSQL NOTIFY on job availability and completion
 
@@ -316,8 +372,8 @@ The package uses the `worker` schema in PostgreSQL:
 1. **Created**: Job is inserted into `worker.job` table
 2. **Available**: Trigger fires `job_available` notification (if start_at is reached)
 3. **Started**: Worker picks up job, sets `started_at` timestamp
-4. **Processing**: Worker function executes
-5. **Completed**: Result or error is saved, `stopped_at` timestamp set
+4. **Processing**: Worker function executes; a heartbeat advances `worker_alive_at` periodically so a crashed worker can be detected
+5. **Completed**: Result or error is saved, `stopped_at` timestamp set, `worker_alive_at` cleared
 6. **Notification**: Trigger fires `job_stopped` notification
 
 ## Error Handling
