@@ -4,20 +4,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/domonda/go-jobqueue"
 )
 
 func TestNewJobBundle(t *testing.T) {
-	ctx := t.Context()
-
 	t.Run("empty descriptions returns error", func(t *testing.T) {
-		bundle, err := jobqueue.NewJobBundle(ctx, "bundleType", "origin", nil, nullable.Time{})
+		bundle, err := jobqueue.NewJobBundle(t.Context(), "bundleType", "origin", nil, nullable.Time{})
 		require.Error(t, err)
 		assert.Nil(t, bundle)
 	})
@@ -27,7 +24,7 @@ func TestNewJobBundle(t *testing.T) {
 			{Type: "type-a", Payload: "{}", Origin: "origin-a", Priority: 5},
 			{Type: "type-b", Payload: "{}", Origin: "origin-b"},
 		}
-		bundle, err := jobqueue.NewJobBundle(ctx, "bundleType", "bundleOrigin", descs, nullable.Time{})
+		bundle, err := jobqueue.NewJobBundle(t.Context(), "bundleType", "bundleOrigin", descs, nullable.Time{})
 		require.NoError(t, err)
 
 		assert.Equal(t, "bundleType", bundle.Type)
@@ -46,7 +43,7 @@ func TestNewJobBundle(t *testing.T) {
 	t.Run("empty desc type falls back to reflection", func(t *testing.T) {
 		payload := time.Time{}
 		descs := []jobqueue.JobDesc{{Payload: payload, Origin: "origin"}}
-		bundle, err := jobqueue.NewJobBundle(ctx, "bundleType", "bundleOrigin", descs, nullable.Time{})
+		bundle, err := jobqueue.NewJobBundle(t.Context(), "bundleType", "bundleOrigin", descs, nullable.Time{})
 		require.NoError(t, err)
 		assert.Equal(t, jobqueue.ReflectJobTypeOfPayload(payload), bundle.Jobs[0].Type)
 	})
@@ -54,7 +51,7 @@ func TestNewJobBundle(t *testing.T) {
 	t.Run("propagates job creation error", func(t *testing.T) {
 		// A nil payload makes NewJobWithPriority fail, which must abort the bundle.
 		descs := []jobqueue.JobDesc{{Type: "type-a", Payload: nil, Origin: "origin"}}
-		bundle, err := jobqueue.NewJobBundle(ctx, "bundleType", "bundleOrigin", descs, nullable.Time{})
+		bundle, err := jobqueue.NewJobBundle(t.Context(), "bundleType", "bundleOrigin", descs, nullable.Time{})
 		require.Error(t, err)
 		assert.Nil(t, bundle)
 	})

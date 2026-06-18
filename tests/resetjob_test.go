@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/domonda/go-types/nullable"
+	"github.com/domonda/go-types/uu"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/domonda/go-jobqueue"
 	"github.com/domonda/go-jobqueue/jobworker"
-	"github.com/domonda/go-types/nullable"
-	"github.com/domonda/go-types/uu"
 )
 
 func TestResetJobDecrementsBundleCounter(t *testing.T) {
@@ -24,7 +24,6 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 	_ = jobqueue.Close()
 	setupDBConn(t)
 	t.Cleanup(func() { _ = jobqueue.Close() })
-	ctx := t.Context()
 
 	t.Run("ResetJob decrements num_jobs_stopped for counted bundle jobs", func(t *testing.T) {
 		jobType := "f47ac10b-58cc-4372-a567-000000000001"
@@ -54,7 +53,7 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 			NumJobs: 2,
 			Jobs:    []*jobqueue.Job{job1, job2},
 		}
-		err = jobqueue.AddBundle(ctx, bundle)
+		err = jobqueue.AddBundle(t.Context(), bundle)
 		require.NoError(t, err)
 
 		t.Cleanup(func() {
@@ -66,42 +65,42 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 		})
 
 		// Phase 1: Process jobs — both fail (retryCount=0, so they're final failures)
-		err = jobworker.StartThreads(ctx, 1)
+		err = jobworker.StartThreads(t.Context(), 1)
 		require.NoError(t, err)
 
-		waiter1 := NewJobWaiter(ctx, t, job1ID)
-		waiter2 := NewJobWaiter(ctx, t, job2ID)
+		waiter1 := NewJobWaiter(t.Context(), t, job1ID)
+		waiter2 := NewJobWaiter(t.Context(), t, job2ID)
 		require.NoError(t, waiter1.Wait())
 		require.NoError(t, waiter2.Wait())
 
 		jobworker.FinishThreads(context.Background())
 
 		// Verify both jobs failed
-		j1, err := jobqueue.GetJob(ctx, job1ID)
+		j1, err := jobqueue.GetJob(t.Context(), job1ID)
 		require.NoError(t, err)
 		require.True(t, j1.HasError(), "job1 should have error")
 
-		j2, err := jobqueue.GetJob(ctx, job2ID)
+		j2, err := jobqueue.GetJob(t.Context(), job2ID)
 		require.NoError(t, err)
 		require.True(t, j2.HasError(), "job2 should have error")
 
 		// Verify bundle counter was incremented for both final failures
-		b, err := jobqueue.GetJobBundle(ctx, bundleID)
+		b, err := jobqueue.GetJobBundle(t.Context(), bundleID)
 		require.NoError(t, err)
 		assert.Equal(t, 2, b.NumJobsStopped, "both failed jobs should be counted in bundle")
 
 		// Phase 2: Reset both jobs — counter must be decremented
-		err = jobqueue.ResetJob(ctx, job1ID)
+		err = jobqueue.ResetJob(t.Context(), job1ID)
 		require.NoError(t, err)
-		err = jobqueue.ResetJob(ctx, job2ID)
+		err = jobqueue.ResetJob(t.Context(), job2ID)
 		require.NoError(t, err)
 
-		b, err = jobqueue.GetJobBundle(ctx, bundleID)
+		b, err = jobqueue.GetJobBundle(t.Context(), bundleID)
 		require.NoError(t, err)
 		assert.Equal(t, 0, b.NumJobsStopped, "counter should be decremented after ResetJob")
 
 		// Verify jobs were actually reset
-		j1, err = jobqueue.GetJob(ctx, job1ID)
+		j1, err = jobqueue.GetJob(t.Context(), job1ID)
 		require.NoError(t, err)
 		assert.False(t, j1.Started(), "job1 should not be started after reset")
 		assert.False(t, j1.Stopped(), "job1 should not be stopped after reset")
@@ -112,14 +111,14 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 		// past num_jobs, violating the CHECK constraint.
 		shouldSucceed.Store(true)
 
-		err = jobworker.StartThreads(ctx, 1)
+		err = jobworker.StartThreads(t.Context(), 1)
 		require.NoError(t, err)
 		t.Cleanup(func() { jobworker.FinishThreads(context.Background()) })
 
 		// Wait for the bundle to complete (auto-deleted on success)
 		bundleWaiter := &Waiter{
 			Check: func() bool {
-				_, err := jobqueue.GetJobBundle(ctx, bundleID)
+				_, err := jobqueue.GetJobBundle(t.Context(), bundleID)
 				// Bundle deleted by auto-cleanup means all jobs succeeded
 				return err != nil
 			},
@@ -157,7 +156,7 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 			NumJobs: 2,
 			Jobs:    []*jobqueue.Job{job1, job2},
 		}
-		err = jobqueue.AddBundle(ctx, bundle)
+		err = jobqueue.AddBundle(t.Context(), bundle)
 		require.NoError(t, err)
 
 		t.Cleanup(func() {
@@ -168,38 +167,38 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 		})
 
 		// Phase 1: Both jobs fail
-		err = jobworker.StartThreads(ctx, 1)
+		err = jobworker.StartThreads(t.Context(), 1)
 		require.NoError(t, err)
 
-		waiter1 := NewJobWaiter(ctx, t, job1ID)
-		waiter2 := NewJobWaiter(ctx, t, job2ID)
+		waiter1 := NewJobWaiter(t.Context(), t, job1ID)
+		waiter2 := NewJobWaiter(t.Context(), t, job2ID)
 		require.NoError(t, waiter1.Wait())
 		require.NoError(t, waiter2.Wait())
 
 		jobworker.FinishThreads(context.Background())
 
-		b, err := jobqueue.GetJobBundle(ctx, bundleID)
+		b, err := jobqueue.GetJobBundle(t.Context(), bundleID)
 		require.NoError(t, err)
 		require.Equal(t, 2, b.NumJobsStopped, "both failed jobs should be counted")
 
 		// Phase 2: Reset both jobs in one call
-		err = jobqueue.ResetJobs(ctx, uu.IDSlice{job1ID, job2ID})
+		err = jobqueue.ResetJobs(t.Context(), uu.IDSlice{job1ID, job2ID})
 		require.NoError(t, err)
 
-		b, err = jobqueue.GetJobBundle(ctx, bundleID)
+		b, err = jobqueue.GetJobBundle(t.Context(), bundleID)
 		require.NoError(t, err)
 		assert.Equal(t, 0, b.NumJobsStopped, "counter should be decremented after ResetJobs")
 
 		// Phase 3: Jobs succeed
 		shouldSucceed.Store(true)
 
-		err = jobworker.StartThreads(ctx, 1)
+		err = jobworker.StartThreads(t.Context(), 1)
 		require.NoError(t, err)
 		t.Cleanup(func() { jobworker.FinishThreads(context.Background()) })
 
 		bundleWaiter := &Waiter{
 			Check: func() bool {
-				_, err := jobqueue.GetJobBundle(ctx, bundleID)
+				_, err := jobqueue.GetJobBundle(t.Context(), bundleID)
 				return err != nil
 			},
 			Timeout:       5 * time.Second,
@@ -220,25 +219,25 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 		job, err := jobqueue.NewJob(jobID, jobType, "test-reset", "{}", nullable.Time{})
 		require.NoError(t, err)
 
-		err = jobqueue.Add(ctx, job)
+		err = jobqueue.Add(t.Context(), job)
 		require.NoError(t, err)
 		t.Cleanup(func() { jobqueue.DeleteJob(context.Background(), jobID) })
 
 		// Process the job (fails)
-		err = jobworker.StartThreads(ctx, 1)
+		err = jobworker.StartThreads(t.Context(), 1)
 		require.NoError(t, err)
 
-		waiter := NewJobWaiter(ctx, t, jobID)
+		waiter := NewJobWaiter(t.Context(), t, jobID)
 		require.NoError(t, waiter.Wait())
 
 		jobworker.FinishThreads(context.Background())
 
 		// Reset the non-bundle job — should not error
-		err = jobqueue.ResetJob(ctx, jobID)
+		err = jobqueue.ResetJob(t.Context(), jobID)
 		require.NoError(t, err)
 
 		// Verify the job was reset
-		j, err := jobqueue.GetJob(ctx, jobID)
+		j, err := jobqueue.GetJob(t.Context(), jobID)
 		require.NoError(t, err)
 		assert.False(t, j.Started())
 		assert.False(t, j.Stopped())
@@ -270,7 +269,7 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 			NumJobs: 1,
 			Jobs:    []*jobqueue.Job{job},
 		}
-		err = jobqueue.AddBundle(ctx, bundle)
+		err = jobqueue.AddBundle(t.Context(), bundle)
 		require.NoError(t, err)
 
 		t.Cleanup(func() {
@@ -280,13 +279,13 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 		})
 
 		// Process the job — fails but has retries, so NOT counted in bundle
-		err = jobworker.StartThreads(ctx, 1)
+		err = jobworker.StartThreads(t.Context(), 1)
 		require.NoError(t, err)
 
 		// Wait for the job to be retried (scheduled for future)
 		retryWaiter := &Waiter{
 			Check: func() bool {
-				j, err := jobqueue.GetJob(ctx, jobID)
+				j, err := jobqueue.GetJob(t.Context(), jobID)
 				if err != nil {
 					return false
 				}
@@ -301,15 +300,15 @@ func TestResetJobDecrementsBundleCounter(t *testing.T) {
 		jobworker.FinishThreads(context.Background())
 
 		// Bundle counter should NOT have been incremented (job still has retries)
-		b, err := jobqueue.GetJobBundle(ctx, bundleID)
+		b, err := jobqueue.GetJobBundle(t.Context(), bundleID)
 		require.NoError(t, err)
 		assert.Equal(t, 0, b.NumJobsStopped, "retryable job should not be counted yet")
 
 		// Reset the job — should not decrement (counter is already 0)
-		err = jobqueue.ResetJob(ctx, jobID)
+		err = jobqueue.ResetJob(t.Context(), jobID)
 		require.NoError(t, err)
 
-		b, err = jobqueue.GetJobBundle(ctx, bundleID)
+		b, err = jobqueue.GetJobBundle(t.Context(), bundleID)
 		require.NoError(t, err)
 		assert.Equal(t, 0, b.NumJobsStopped, "counter should still be 0 after resetting uncounted job")
 	})
@@ -329,7 +328,6 @@ func TestSetJobErrorTerminalForMissingScheduler(t *testing.T) {
 	_ = jobqueue.Close()
 	setupDBConn(t)
 	t.Cleanup(func() { _ = jobqueue.Close() })
-	ctx := t.Context()
 
 	jobType := "test-missing-scheduler-terminal-type"
 
@@ -354,20 +352,20 @@ func TestSetJobErrorTerminalForMissingScheduler(t *testing.T) {
 		NumJobs: 1,
 		Jobs:    []*jobqueue.Job{job},
 	}
-	require.NoError(t, jobqueue.AddBundle(ctx, bundle))
+	require.NoError(t, jobqueue.AddBundle(t.Context(), bundle))
 	t.Cleanup(func() {
 		bg := context.Background()
 		jobqueue.GetService(bg).DeleteJobBundle(bg, bundleID)
 		jobqueue.DeleteJob(bg, jobID)
 	})
 
-	require.NoError(t, jobworker.StartThreads(ctx, 1))
+	require.NoError(t, jobworker.StartThreads(t.Context(), 1))
 	t.Cleanup(func() { jobworker.FinishThreads(context.Background()) })
 
 	// Wait until the job has stopped with an error.
 	stopped := &Waiter{
 		Check: func() bool {
-			j, err := jobqueue.GetJob(ctx, jobID)
+			j, err := jobqueue.GetJob(t.Context(), jobID)
 			return err == nil && j.Stopped() && j.HasError()
 		},
 		Timeout:       5 * time.Second,
@@ -375,7 +373,7 @@ func TestSetJobErrorTerminalForMissingScheduler(t *testing.T) {
 	}
 	require.NoError(t, stopped.Wait())
 
-	j, err := jobqueue.GetJob(ctx, jobID)
+	j, err := jobqueue.GetJob(t.Context(), jobID)
 	require.NoError(t, err)
 	assert.True(t, j.Stopped(), "job should be stopped")
 	assert.True(t, j.HasError(), "job should be errored")
@@ -384,7 +382,7 @@ func TestSetJobErrorTerminalForMissingScheduler(t *testing.T) {
 	assert.True(t, j.WorkerAliveAt.IsNull(), "worker_alive_at should be cleared")
 
 	// The bundle must count this terminal failure so the bundle can complete.
-	b, err := jobqueue.GetJobBundle(ctx, bundleID)
+	b, err := jobqueue.GetJobBundle(t.Context(), bundleID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, b.NumJobsStopped, "a terminal failure must be counted in its bundle")
 }

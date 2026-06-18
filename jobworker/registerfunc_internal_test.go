@@ -6,10 +6,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/domonda/go-types/notnull"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/domonda/go-types/notnull"
 
 	"github.com/domonda/go-jobqueue"
 )
@@ -90,14 +89,12 @@ func TestRegisterFuncReflectJobType(t *testing.T) {
 // unmarshalling, pointer-vs-value argument construction, the with/without
 // context call paths, and each result-arity extraction.
 func TestRegisterFuncRuntime(t *testing.T) {
-	ctx := t.Context()
-
 	t.Run("context, value arg, (result, error)", func(t *testing.T) {
 		resetWorkerRegistryState(t)
 		RegisterFuncForJobType("t", func(_ context.Context, p rfPayload) (rfResult, error) {
 			return rfResult{Greeting: "hi " + p.Name}, nil
 		})
-		result, err := getRegisteredWorker(t, "t")(ctx, &jobqueue.Job{Payload: notnull.JSON(`{"Name":"bob"}`)})
+		result, err := getRegisteredWorker(t, "t")(t.Context(), &jobqueue.Job{Payload: notnull.JSON(`{"Name":"bob"}`)})
 		require.NoError(t, err)
 		assert.Equal(t, rfResult{Greeting: "hi bob"}, result)
 	})
@@ -110,7 +107,7 @@ func TestRegisterFuncRuntime(t *testing.T) {
 			called = true
 			got = p
 		})
-		result, err := getRegisteredWorker(t, "t")(ctx, &jobqueue.Job{Payload: notnull.JSON(`{"Name":"x"}`)})
+		result, err := getRegisteredWorker(t, "t")(t.Context(), &jobqueue.Job{Payload: notnull.JSON(`{"Name":"x"}`)})
 		require.NoError(t, err)
 		assert.Nil(t, result)
 		assert.True(t, called)
@@ -124,7 +121,7 @@ func TestRegisterFuncRuntime(t *testing.T) {
 			gotPtr = p
 			return nil
 		})
-		_, err := getRegisteredWorker(t, "t")(ctx, &jobqueue.Job{Payload: notnull.JSON(`{"Name":"y"}`)})
+		_, err := getRegisteredWorker(t, "t")(t.Context(), &jobqueue.Job{Payload: notnull.JSON(`{"Name":"y"}`)})
 		require.NoError(t, err)
 		require.NotNil(t, gotPtr)
 		assert.Equal(t, "y", gotPtr.Name)
@@ -133,7 +130,7 @@ func TestRegisterFuncRuntime(t *testing.T) {
 	t.Run("single error result, nil error", func(t *testing.T) {
 		resetWorkerRegistryState(t)
 		RegisterFuncForJobType("t", func(rfPayload) error { return nil })
-		result, err := getRegisteredWorker(t, "t")(ctx, &jobqueue.Job{Payload: notnull.JSON(`{}`)})
+		result, err := getRegisteredWorker(t, "t")(t.Context(), &jobqueue.Job{Payload: notnull.JSON(`{}`)})
 		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
@@ -141,7 +138,7 @@ func TestRegisterFuncRuntime(t *testing.T) {
 	t.Run("single error result, non-nil error", func(t *testing.T) {
 		resetWorkerRegistryState(t)
 		RegisterFuncForJobType("t", func(rfPayload) error { return errors.New("worker failed") })
-		result, err := getRegisteredWorker(t, "t")(ctx, &jobqueue.Job{Payload: notnull.JSON(`{}`)})
+		result, err := getRegisteredWorker(t, "t")(t.Context(), &jobqueue.Job{Payload: notnull.JSON(`{}`)})
 		require.Error(t, err)
 		assert.Nil(t, result, "an error result is returned as err, not result")
 	})
@@ -149,7 +146,7 @@ func TestRegisterFuncRuntime(t *testing.T) {
 	t.Run("single non-error result", func(t *testing.T) {
 		resetWorkerRegistryState(t)
 		RegisterFuncForJobType("t", func(p rfPayload) rfResult { return rfResult{Greeting: p.Name} })
-		result, err := getRegisteredWorker(t, "t")(ctx, &jobqueue.Job{Payload: notnull.JSON(`{"Name":"z"}`)})
+		result, err := getRegisteredWorker(t, "t")(t.Context(), &jobqueue.Job{Payload: notnull.JSON(`{"Name":"z"}`)})
 		require.NoError(t, err)
 		assert.Equal(t, rfResult{Greeting: "z"}, result)
 	})
@@ -158,7 +155,7 @@ func TestRegisterFuncRuntime(t *testing.T) {
 		resetWorkerRegistryState(t)
 		RegisterFuncForJobType("t", func(rfPayload) {})
 		// A JSON array cannot be unmarshalled into the struct argument.
-		_, err := getRegisteredWorker(t, "t")(ctx, &jobqueue.Job{Payload: notnull.JSON(`[1,2,3]`)})
+		_, err := getRegisteredWorker(t, "t")(t.Context(), &jobqueue.Job{Payload: notnull.JSON(`[1,2,3]`)})
 		require.Error(t, err)
 	})
 }

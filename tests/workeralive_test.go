@@ -20,9 +20,9 @@ import (
 // SetJobStart transitions directly, without registering a worker and racing the
 // thread pool. InitJobQueue registers the same *jobworkerDB value as both the
 // jobqueue default service and the jobworker DataBase, so the assertion holds.
-func dataBaseAPI(t *testing.T, ctx context.Context) jobworker.DataBase {
+func dataBaseAPI(t *testing.T) jobworker.DataBase {
 	t.Helper()
-	dbAPI, ok := jobqueue.GetService(ctx).(jobworker.DataBase)
+	dbAPI, ok := jobqueue.GetService(t.Context()).(jobworker.DataBase)
 	require.True(t, ok, "default service must implement jobworker.DataBase")
 	return dbAPI
 }
@@ -38,9 +38,8 @@ func TestSetJobWorkerAliveGuard(t *testing.T) {
 	_ = jobqueue.Close()
 	setupDBConn(t)
 	t.Cleanup(func() { _ = jobqueue.Close() })
-	ctx := t.Context()
 
-	dbAPI := dataBaseAPI(t, ctx)
+	dbAPI := dataBaseAPI(t)
 
 	const origin = "test-set-worker-alive-guard"
 	t.Cleanup(func() {
@@ -51,7 +50,7 @@ func TestSetJobWorkerAliveGuard(t *testing.T) {
 	// a NULL started_at/stopped_at.
 	insertJob := func(t *testing.T, id uu.ID, startedAt, stoppedAt any) {
 		t.Helper()
-		err := db.Exec(ctx,
+		err := db.Exec(t.Context(),
 			/*sql*/ `
 				insert into worker.job (
 					id, type, payload, priority, origin,
@@ -66,7 +65,7 @@ func TestSetJobWorkerAliveGuard(t *testing.T) {
 
 	get := func(t *testing.T, id uu.ID) *jobqueue.Job {
 		t.Helper()
-		j, err := jobqueue.GetJob(ctx, id)
+		j, err := jobqueue.GetJob(t.Context(), id)
 		require.NoError(t, err)
 		return j
 	}
@@ -74,7 +73,7 @@ func TestSetJobWorkerAliveGuard(t *testing.T) {
 	t.Run("advances worker_alive_at for a job being processed", func(t *testing.T) {
 		id := uu.IDFrom("f47ac10b-58cc-4372-a567-d00000000001")
 		insertJob(t, id, time.Now(), nil) // started, not stopped
-		require.NoError(t, dbAPI.SetJobWorkerAlive(ctx, id))
+		require.NoError(t, dbAPI.SetJobWorkerAlive(t.Context(), id))
 		assert.True(t, get(t, id).WorkerAliveAt.IsNotNull(),
 			"heartbeat must set worker_alive_at on a started, not-stopped job")
 	})
@@ -82,7 +81,7 @@ func TestSetJobWorkerAliveGuard(t *testing.T) {
 	t.Run("is a no-op for a stopped job", func(t *testing.T) {
 		id := uu.IDFrom("f47ac10b-58cc-4372-a567-d00000000002")
 		insertJob(t, id, time.Now(), time.Now()) // started AND stopped
-		require.NoError(t, dbAPI.SetJobWorkerAlive(ctx, id))
+		require.NoError(t, dbAPI.SetJobWorkerAlive(t.Context(), id))
 		assert.True(t, get(t, id).WorkerAliveAt.IsNull(),
 			"guard must not resurrect worker_alive_at on a stopped job")
 	})
@@ -90,7 +89,7 @@ func TestSetJobWorkerAliveGuard(t *testing.T) {
 	t.Run("is a no-op for an unclaimed job", func(t *testing.T) {
 		id := uu.IDFrom("f47ac10b-58cc-4372-a567-d00000000003")
 		insertJob(t, id, nil, nil) // never started
-		require.NoError(t, dbAPI.SetJobWorkerAlive(ctx, id))
+		require.NoError(t, dbAPI.SetJobWorkerAlive(t.Context(), id))
 		assert.True(t, get(t, id).WorkerAliveAt.IsNull(),
 			"guard must not set worker_alive_at on an unclaimed job")
 	})
@@ -107,9 +106,8 @@ func TestWorkerAliveClearedOnTransitions(t *testing.T) {
 	_ = jobqueue.Close()
 	setupDBConn(t)
 	t.Cleanup(func() { _ = jobqueue.Close() })
-	ctx := t.Context()
 
-	dbAPI := dataBaseAPI(t, ctx)
+	dbAPI := dataBaseAPI(t)
 
 	const origin = "test-worker-alive-cleared"
 	t.Cleanup(func() {
@@ -121,7 +119,7 @@ func TestWorkerAliveClearedOnTransitions(t *testing.T) {
 	insertProcessingJob := func(t *testing.T, id uu.ID, maxRetry, curRetry int) {
 		t.Helper()
 		now := time.Now()
-		err := db.Exec(ctx,
+		err := db.Exec(t.Context(),
 			/*sql*/ `
 				insert into worker.job (
 					id, type, payload, priority, origin,
@@ -134,14 +132,14 @@ func TestWorkerAliveClearedOnTransitions(t *testing.T) {
 		require.NoError(t, err)
 		// Precondition: the row really does carry a heartbeat to be cleared,
 		// otherwise the assertions below would pass vacuously.
-		j, err := jobqueue.GetJob(ctx, id)
+		j, err := jobqueue.GetJob(t.Context(), id)
 		require.NoError(t, err)
 		require.True(t, j.WorkerAliveAt.IsNotNull(), "fixture must start with a non-NULL worker_alive_at")
 	}
 
 	assertCleared := func(t *testing.T, id uu.ID) {
 		t.Helper()
-		j, err := jobqueue.GetJob(ctx, id)
+		j, err := jobqueue.GetJob(t.Context(), id)
 		require.NoError(t, err)
 		assert.True(t, j.WorkerAliveAt.IsNull(), "worker_alive_at must be cleared by the transition")
 	}
@@ -150,21 +148,21 @@ func TestWorkerAliveClearedOnTransitions(t *testing.T) {
 		id := uu.IDFrom("f47ac10b-58cc-4372-a567-d00000000011")
 		insertProcessingJob(t, id, 3, 3) // retries exhausted -> final failure
 		var errData nullable.JSON        // NULL error_data
-		require.NoError(t, dbAPI.SetJobError(ctx, id, "boom", errData))
+		require.NoError(t, dbAPI.SetJobError(t.Context(), id, "boom", errData))
 		assertCleared(t, id)
 	})
 
 	t.Run("ScheduleRetry clears worker_alive_at", func(t *testing.T) {
 		id := uu.IDFrom("f47ac10b-58cc-4372-a567-d00000000012")
 		insertProcessingJob(t, id, 3, 0)
-		require.NoError(t, dbAPI.ScheduleRetry(ctx, id, time.Now().Add(time.Hour), 1))
+		require.NoError(t, dbAPI.ScheduleRetry(t.Context(), id, time.Now().Add(time.Hour), 1))
 		assertCleared(t, id)
 	})
 
 	t.Run("SetJobStart clears worker_alive_at", func(t *testing.T) {
 		id := uu.IDFrom("f47ac10b-58cc-4372-a567-d00000000013")
 		insertProcessingJob(t, id, 3, 0)
-		require.NoError(t, dbAPI.SetJobStart(ctx, id, time.Now().Add(time.Hour)))
+		require.NoError(t, dbAPI.SetJobStart(t.Context(), id, time.Now().Add(time.Hour)))
 		assertCleared(t, id)
 	})
 }

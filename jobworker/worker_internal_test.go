@@ -22,7 +22,7 @@ func noopWorker(context.Context, *jobqueue.Job) (any, error) { return nil, nil }
 // the running-threads guard.
 func resetWorkerRegistryState(t *testing.T) {
 	t.Helper()
-	clear := func() {
+	clearRegistry := func() {
 		workersMtx.Lock()
 		for k := range workers {
 			delete(workers, k)
@@ -31,8 +31,8 @@ func resetWorkerRegistryState(t *testing.T) {
 		workerTypesGeneration = 0
 		workersMtx.Unlock()
 	}
-	clear()
-	t.Cleanup(clear)
+	clearRegistry()
+	t.Cleanup(clearRegistry)
 }
 
 // TestRegisteredJobTypesCacheAndGeneration covers the sorted output, the

@@ -129,7 +129,7 @@ func RegisterFuncForJobType(jobType string, workerFunc any) {
 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobType, workerFunc)
 
 	if jobType == "" {
-		panic(fmt.Errorf("jobType must not be empty"))
+		panic(errs.New("jobType must not be empty"))
 	}
 
 	registerFunc(jobType, workerFunc)

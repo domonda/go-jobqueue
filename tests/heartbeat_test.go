@@ -21,7 +21,6 @@ func TestJobHeartbeat(t *testing.T) {
 	_ = jobqueue.Close()
 	setupDBConn(t)
 	t.Cleanup(func() { _ = jobqueue.Close() })
-	ctx := t.Context()
 
 	// Speed up the heartbeat so the test doesn't have to wait 10 seconds.
 	origInterval := jobworker.HeartbeatInterval
@@ -48,11 +47,11 @@ func TestJobHeartbeat(t *testing.T) {
 	jobID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000011")
 	job, err := jobqueue.NewJob(jobID, jobType, "test-heartbeat", "{}", nullable.TimeNow())
 	require.NoError(t, err)
-	err = jobqueue.Add(ctx, job)
+	err = jobqueue.Add(t.Context(), job)
 	require.NoError(t, err)
 	t.Cleanup(func() { jobqueue.DeleteJob(context.Background(), jobID) })
 
-	err = jobworker.StartThreads(ctx, 1)
+	err = jobworker.StartThreads(t.Context(), 1)
 	require.NoError(t, err)
 	// FinishThreads is registered before releaseWorker so that releaseWorker
 	// (and thus the worker returning) runs first during cleanup, preventing
@@ -63,7 +62,7 @@ func TestJobHeartbeat(t *testing.T) {
 	// Wait until the worker has claimed the job and is processing it.
 	processingWaiter := &Waiter{
 		Check: func() bool {
-			j, err := jobqueue.GetJob(ctx, jobID)
+			j, err := jobqueue.GetJob(t.Context(), jobID)
 			require.NoError(t, err)
 			return j.StartedAndNotStopped()
 		},
@@ -72,7 +71,7 @@ func TestJobHeartbeat(t *testing.T) {
 	}
 	require.NoError(t, processingWaiter.Wait())
 
-	j, err := jobqueue.GetJob(ctx, jobID)
+	j, err := jobqueue.GetJob(t.Context(), jobID)
 	require.NoError(t, err)
 	require.True(t, j.WorkerAliveAt.IsNotNull(), "worker_alive_at should be set when the job is claimed")
 	firstAlive := j.WorkerAliveAt.Get()
@@ -80,7 +79,7 @@ func TestJobHeartbeat(t *testing.T) {
 	// The heartbeat goroutine must keep advancing worker_alive_at while processing.
 	advanceWaiter := &Waiter{
 		Check: func() bool {
-			j, err := jobqueue.GetJob(ctx, jobID)
+			j, err := jobqueue.GetJob(t.Context(), jobID)
 			require.NoError(t, err)
 			return j.WorkerAliveAt.IsNotNull() && j.WorkerAliveAt.Get().After(firstAlive)
 		},
@@ -89,19 +88,19 @@ func TestJobHeartbeat(t *testing.T) {
 	}
 	require.NoError(t, advanceWaiter.Wait(), "worker_alive_at should advance via heartbeat while processing")
 
-	j, err = jobqueue.GetJob(ctx, jobID)
+	j, err = jobqueue.GetJob(t.Context(), jobID)
 	require.NoError(t, err)
 	assert.True(t, j.WorkerAlive(time.Second), "worker should be considered alive with a fresh heartbeat")
 
 	// Let the worker finish.
 	releaseWorker()
 
-	finishWaiter := NewJobWaiter(ctx, t, jobID)
+	finishWaiter := NewJobWaiter(t.Context(), t, jobID)
 	finishWaiter.Timeout = 3 * time.Second
 	require.NoError(t, finishWaiter.Wait())
 
 	// After completion worker_alive_at must be cleared and the job stopped without error.
-	j, err = jobqueue.GetJob(ctx, jobID)
+	j, err = jobqueue.GetJob(t.Context(), jobID)
 	require.NoError(t, err)
 	assert.True(t, j.Stopped(), "job should be stopped after completion")
 	assert.False(t, j.HasError(), "job should not have an error")
@@ -118,7 +117,6 @@ func TestJobHeartbeatDisabled(t *testing.T) {
 	_ = jobqueue.Close()
 	setupDBConn(t)
 	t.Cleanup(func() { _ = jobqueue.Close() })
-	ctx := t.Context()
 
 	origInterval := jobworker.HeartbeatInterval
 	jobworker.HeartbeatInterval = 0 // disable heartbeats
@@ -142,18 +140,18 @@ func TestJobHeartbeatDisabled(t *testing.T) {
 	jobID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000012")
 	job, err := jobqueue.NewJob(jobID, jobType, "test-heartbeat-disabled", "{}", nullable.TimeNow())
 	require.NoError(t, err)
-	err = jobqueue.Add(ctx, job)
+	err = jobqueue.Add(t.Context(), job)
 	require.NoError(t, err)
 	t.Cleanup(func() { jobqueue.DeleteJob(context.Background(), jobID) })
 
-	err = jobworker.StartThreads(ctx, 1)
+	err = jobworker.StartThreads(t.Context(), 1)
 	require.NoError(t, err)
 	t.Cleanup(func() { jobworker.FinishThreads(context.Background()) })
 	t.Cleanup(releaseWorker)
 
 	processingWaiter := &Waiter{
 		Check: func() bool {
-			j, err := jobqueue.GetJob(ctx, jobID)
+			j, err := jobqueue.GetJob(t.Context(), jobID)
 			require.NoError(t, err)
 			return j.StartedAndNotStopped()
 		},
@@ -162,7 +160,7 @@ func TestJobHeartbeatDisabled(t *testing.T) {
 	}
 	require.NoError(t, processingWaiter.Wait())
 
-	j, err := jobqueue.GetJob(ctx, jobID)
+	j, err := jobqueue.GetJob(t.Context(), jobID)
 	require.NoError(t, err)
 	assert.True(t, j.WorkerAliveAt.IsNull(), "worker_alive_at must stay NULL when heartbeats are disabled")
 	assert.False(t, j.WorkerAlive(time.Hour), "a job without a heartbeat is never reported alive")
@@ -180,7 +178,6 @@ func TestRetrySchedulerRunsUnderLiveHeartbeat(t *testing.T) {
 	_ = jobqueue.Close()
 	setupDBConn(t)
 	t.Cleanup(func() { _ = jobqueue.Close() })
-	ctx := t.Context()
 
 	// Fast heartbeat so the test can observe worker_alive_at advancing quickly.
 	origInterval := jobworker.HeartbeatInterval
@@ -212,10 +209,10 @@ func TestRetrySchedulerRunsUnderLiveHeartbeat(t *testing.T) {
 	jobID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000021")
 	job, err := jobqueue.NewJob(jobID, jobType, "test-retry-live-heartbeat", "{}", nullable.Time{}, 3)
 	require.NoError(t, err)
-	require.NoError(t, jobqueue.Add(ctx, job))
+	require.NoError(t, jobqueue.Add(t.Context(), job))
 	t.Cleanup(func() { jobqueue.DeleteJob(context.Background(), jobID) })
 
-	require.NoError(t, jobworker.StartThreads(ctx, 1))
+	require.NoError(t, jobworker.StartThreads(t.Context(), 1))
 	// FinishThreads is registered before release so that release (LIFO cleanup)
 	// runs first, letting the worker return before FinishThreads waits on it.
 	t.Cleanup(func() { jobworker.FinishThreads(context.Background()) })
@@ -231,7 +228,7 @@ func TestRetrySchedulerRunsUnderLiveHeartbeat(t *testing.T) {
 	// Core invariant: while the scheduler runs, the job stays started+not-stopped
 	// with a non-NULL heartbeat and is NOT yet marked errored. On the old code it
 	// was already stopped+errored here, so all three of these would fail.
-	j, err := jobqueue.GetJob(ctx, jobID)
+	j, err := jobqueue.GetJob(t.Context(), jobID)
 	require.NoError(t, err)
 	require.True(t, j.StartedAndNotStopped(), "job must stay started+not-stopped while the retry scheduler runs")
 	require.True(t, j.WorkerAliveAt.IsNotNull(), "job must carry a heartbeat while the retry scheduler runs")
@@ -241,7 +238,7 @@ func TestRetrySchedulerRunsUnderLiveHeartbeat(t *testing.T) {
 	// The heartbeat must keep advancing during the blocked scheduler call.
 	advance := &Waiter{
 		Check: func() bool {
-			j, err := jobqueue.GetJob(ctx, jobID)
+			j, err := jobqueue.GetJob(t.Context(), jobID)
 			require.NoError(t, err)
 			return j.StartedAndNotStopped() && j.WorkerAliveAt.IsNotNull() && j.WorkerAliveAt.Get().After(first)
 		},
@@ -256,7 +253,7 @@ func TestRetrySchedulerRunsUnderLiveHeartbeat(t *testing.T) {
 
 	retried := &Waiter{
 		Check: func() bool {
-			j, err := jobqueue.GetJob(ctx, jobID)
+			j, err := jobqueue.GetJob(t.Context(), jobID)
 			require.NoError(t, err)
 			return !j.Started() && j.CurrentRetryCount == 1 && j.WorkerAliveAt.IsNull()
 		},
