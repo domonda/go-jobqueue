@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 
 	"github.com/domonda/go-errs"
-	"github.com/domonda/go-jobqueue"
 	"github.com/domonda/go-sqldb"
 	"github.com/domonda/go-types"
-	"github.com/domonda/go-types/notnull"
+
+	"github.com/domonda/go-jobqueue"
 )
 
 // WorkerFunc processes a job and returns an optional result that is stored as
@@ -18,12 +19,28 @@ import (
 type WorkerFunc func(ctx context.Context, job *jobqueue.Job) (result any, err error)
 
 // Register a Worker implementation for a jobType.
+//
+// Register must be called during startup, before StartThreads. It mutates the set
+// of job types that jobworkerdb caches a prepared claim statement against (keyed
+// on a generation bumped here), and changing that set while worker threads claim
+// jobs would race that cache. Register panics if called while worker threads are
+// running.
+//
 // See also RegisterFunc
 func Register(jobType string, worker WorkerFunc) {
 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobType)
 
 	if sqlInject, info := sqldb.IsSQLInjection(jobType); sqlInject {
 		panic(fmt.Errorf("jobType %#v contains probably SQL injection: %s", jobType, info))
+	}
+
+	// Hold setupMtx for the whole call so StartThreads (which takes setupMtx for
+	// writing) cannot begin between this guard and the workers mutation below.
+	// Registration is a startup-only step; see the doc comment above.
+	setupMtx.RLock()
+	defer setupMtx.RUnlock()
+	if numRunningThreads > 0 {
+		panic(fmt.Errorf("jobworker.Register(%#v) must be called before StartThreads, but %d worker thread(s) are running", jobType, numRunningThreads))
 	}
 
 	workersMtx.Lock()
@@ -34,6 +51,7 @@ func Register(jobType string, worker WorkerFunc) {
 	}
 
 	workers[jobType] = worker
+	invalidateWorkerTypesCacheLocked()
 }
 
 // IsRegistered checks if a worker is registered for the given job type.
@@ -44,21 +62,57 @@ func IsRegistered(jobType string) bool {
 	return workers[jobType] != nil
 }
 
-// RegisteredJobTypes returns the job types that currently have a worker registered.
-func RegisteredJobTypes() notnull.StringArray {
+// RegisteredJobTypes returns the sorted job types that currently have a worker
+// registered, together with a generation that changes whenever that set changes
+// (via Register/Unregister). The pair comes from a single locked read, so it is
+// always consistent: a consumer can cache a value derived from the types and
+// rebuild only when the generation differs from the one it last built against,
+// without comparing the type sets themselves.
+//
+// The result is read from a cache rebuilt only when the set of registered workers
+// changes, so the common case is a single read lock with no allocation. The
+// returned slice is shared and MUST NOT be mutated by the caller.
+func RegisteredJobTypes() (jobTypes []string, generation uint64) {
 	workersMtx.RLock()
-	defer workersMtx.RUnlock()
-
-	jobTypes := make(notnull.StringArray, 0, len(workers))
-	for jobType := range workers {
-		jobTypes = append(jobTypes, jobType)
+	cached, generation := workerTypes, workerTypesGeneration
+	workersMtx.RUnlock()
+	if cached != nil {
+		return cached, generation
 	}
-	return jobTypes
+
+	workersMtx.Lock()
+	defer workersMtx.Unlock()
+
+	// Re-check under the write lock: another goroutine may have rebuilt the cache
+	// between the RUnlock above and acquiring the write lock. The rebuilt slice is
+	// sorted for a canonical order downstream consumers can cache against;
+	// workerTypesGeneration is left untouched (it is bumped on invalidation, so it
+	// already reflects the current set).
+	if workerTypes == nil {
+		types := make([]string, 0, len(workers))
+		for jobType := range workers {
+			types = append(types, jobType)
+		}
+		slices.Sort(types)
+		workerTypes = types
+	}
+	return workerTypes, workerTypesGeneration
+}
+
+// invalidateWorkerTypesCacheLocked marks the registered-job-types cache stale and
+// bumps the generation so downstream consumers (e.g. the jobworkerdb claim query)
+// know to rebuild. The caller must hold workersMtx for writing.
+func invalidateWorkerTypesCacheLocked() {
+	workerTypes = nil
+	workerTypesGeneration++
 }
 
 // RegisterFunc uses reflection to register a function with a custom
 // payload argument type as Worker for jobs of type ReflectJobType(arg).
 // The playload JSON of the job will be unmarshalled to the type of the argument.
+//
+// Like Register (which it calls), RegisterFunc must be called before StartThreads
+// and panics if worker threads are running.
 func RegisterFunc(workerFunc any) {
 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), workerFunc)
 
@@ -68,6 +122,9 @@ func RegisterFunc(workerFunc any) {
 // RegisterFuncForJobType uses reflection to register a function with a custom
 // payload argument type as Worker for jobs of jobType.
 // The playload JSON of the job will be unmarshalled to the type of the argument.
+//
+// Like Register (which it calls), RegisterFuncForJobType must be called before
+// StartThreads and panics if worker threads are running.
 func RegisterFuncForJobType(jobType string, workerFunc any) {
 	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobType, workerFunc)
 
@@ -109,7 +166,7 @@ func registerFunc(jobType string, workerFunc any) {
 		panic(fmt.Errorf("workerFunc must have an argument type that can be marshalled to JSON, but has %s", argType))
 	}
 	payloadType := argType
-	for payloadType.Kind() == reflect.Ptr {
+	for payloadType.Kind() == reflect.Pointer {
 		payloadType = payloadType.Elem()
 	}
 
@@ -146,7 +203,7 @@ func registerFunc(jobType string, workerFunc any) {
 		if err != nil {
 			return nil, fmt.Errorf("error while unmarshalling job payload '%s': %w", job.Payload, err)
 		}
-		if argType.Kind() != reflect.Ptr {
+		if argType.Kind() != reflect.Pointer {
 			payloadVal = payloadVal.Elem()
 		}
 		var params []reflect.Value
@@ -194,7 +251,22 @@ func registerFunc(jobType string, workerFunc any) {
 
 // Unregister removes the workers for the given job types,
 // or all registered workers if no job type is passed.
+//
+// Like Register, Unregister mutates the cached claim statement's job-type set, so
+// it must be called while no worker threads are running: stop them with
+// FinishThreads (or StopThreads) first. Unregister panics if worker threads are
+// running.
 func Unregister(jobTypes ...string) {
+	defer errs.LogPanicWithFuncParams(log.ErrorWriter(), jobTypes)
+
+	// Hold setupMtx for the whole call so StartThreads cannot begin between this
+	// guard and the workers mutation below (mirrors Register).
+	setupMtx.RLock()
+	defer setupMtx.RUnlock()
+	if numRunningThreads > 0 {
+		panic(fmt.Errorf("jobworker.Unregister must be called after FinishThreads, but %d worker thread(s) are running", numRunningThreads))
+	}
+
 	workersMtx.Lock()
 	defer workersMtx.Unlock()
 
@@ -209,4 +281,5 @@ func Unregister(jobTypes ...string) {
 			delete(workers, jobType)
 		}
 	}
+	invalidateWorkerTypesCacheLocked()
 }

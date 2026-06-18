@@ -242,8 +242,8 @@ if err != nil {
 
 Worker pools can run in multiple processes against the same database — this is how you scale
 horizontally. Each process calls `jobworker.StartThreads` independently and they all compete for
-the same queue; every job is claimed atomically (`SELECT ... FOR UPDATE SKIP LOCKED`), so two
-workers never pick up the same available job at once. (A failed job is still retried, and a job
+the same queue; every job is claimed atomically by a single statement that row-locks the next
+job with `FOR UPDATE SKIP LOCKED`, so two workers never pick up the same available job at once. (A failed job is still retried, and a job
 abandoned by a crashed worker is reclaimed, but never run concurrently.)
 
 While a worker processes a job it advances the job's `worker_alive_at` heartbeat every

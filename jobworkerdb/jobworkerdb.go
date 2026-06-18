@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -356,6 +358,10 @@ func (j *jobworkerDB) Close() (err error) {
 		}
 	}
 
+	// Release the cached prepared statements (claim + heartbeat). The closed flag
+	// is already set above, so no new claim or heartbeat will start using them.
+	err = errors.Join(err, closeCachedStmts())
+
 	return err
 }
 
@@ -402,6 +408,124 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 	)
 }
 
+// buildClaimJobQuery assembles the StartNextJobOrNil claim statement: a single
+// CTE that selects the next claimable job (FOR UPDATE SKIP LOCKED) and marks it
+// started, atomically and without any query parameters, returning the updated
+// row. Being parameterless lets it be a cached prepared statement.
+//
+// The registered job types are inlined as a `"type" in ('a','b')` predicate; the
+// set is constant per process (it only changes via jobworker.Register/Unregister,
+// normally at startup) and is SQL-injection checked at registration, so inlining
+// the types as literals lets PostgreSQL plan against the actual values instead of
+// an opaque `= any($n)` array parameter.
+//
+// All timestamps use the database clock (now()), so started_at / worker_alive_at /
+// updated_at are immune to clock skew between worker processes and the database.
+// worker_alive_at is stamped with now() only when heartbeats are enabled; with
+// heartbeats disabled it is left NULL so the reaper's heartbeat-staleness branch
+// (which requires worker_alive_at IS NOT NULL) stays inert and never resets a
+// still-running job that has no liveness signal. HeartbeatInterval is process
+// startup config, so that choice is inlined here too — no query parameter.
+//
+// jobTypes must be non-empty; StartNextJobOrNil returns early for the empty case
+// (nothing to claim) so this never builds an invalid empty `in ()`.
+func buildClaimJobQuery(jobTypes []string, conn sqldb.QueryFormatter) string {
+	workerAliveAt := "null"
+	if jobworker.HeartbeatInterval > 0 {
+		workerAliveAt = "now()"
+	}
+
+	// FormatStringLiteral returns a complete, properly quoted PostgreSQL string
+	// literal (single quotes, '' escaping, E'' for backslashes). Job types are
+	// also SQL-injection checked in jobworker.Register.
+	typeLiterals := make([]string, len(jobTypes))
+	for i, jobType := range jobTypes {
+		typeLiterals[i] = conn.FormatStringLiteral(jobType)
+	}
+
+	// The CTE `claimed` finds and row-locks the single next job to run; the outer
+	// UPDATE marks that same row as started. Both run as one statement, so the
+	// claim is atomic without a surrounding transaction.
+	return fmt.Sprintf(
+		/*sql*/ `
+			with claimed as (
+				select id
+				from worker.job
+				where started_at is null                          -- not started yet
+					and (start_at is null or start_at <= now())   -- scheduled start reached (or unscheduled)
+					and "type" in (%s)                            -- only job types this process has workers for
+				order by
+					priority desc,    -- highest priority first,
+					created_at asc    -- then oldest first (FIFO within a priority)
+				limit 1
+				-- skip locked: take the next row not already locked by another worker
+				-- (rather than blocking on it), so concurrent workers each claim a
+				-- different job.
+				for update skip locked
+			)
+			update worker.job
+			set started_at      = now(),
+				worker_alive_at = %s,  -- liveness anchor: now() if heartbeats enabled, else null
+				updated_at      = now()
+			from claimed
+			where worker.job.id = claimed.id      -- the row the CTE locked
+			returning worker.job.*                -- full updated row, scanned into the job struct
+		`,
+		strings.Join(typeLiterals, ","), // for "type" in (%s)
+		workerAliveAt,                   // for worker_alive_at = %s
+	)
+}
+
+// claimJobStmt cache, guarded by claimJobStmtMtx. The claim statement takes no
+// parameters, so it is prepared once and reused; it is re-prepared only when the
+// registered job types change (the jobworker generation), which is startup-only.
+//
+// This cache is package-level, not per jobworkerDB instance: a process runs a
+// single active service (see InitJobQueue), and closeCachedStmts releases it on
+// Close. Running two services against different connections concurrently is not
+// supported, as they would share this one cached statement.
+var (
+	claimJobStmtMtx   sync.Mutex
+	claimJobStmtGen   uint64
+	claimJobStmtQuery func(ctx context.Context, args ...any) (*jobqueue.Job, error)
+	claimJobStmtClose func() error
+)
+
+// claimJobStmt returns the cached prepared claim statement for the given
+// registered job types, (re)preparing it when the generation changes. jobTypes
+// and gen come from a single jobworker.RegisteredJobTypes call, so they are a
+// consistent pair. The returned query func wraps a pool-safe *sql.Stmt
+// (database/sql re-prepares it per pooled connection) and is safe to call
+// concurrently, so callers execute it outside the lock. The generation changes
+// only on Register/Unregister (startup-only), so the re-prepare — and the Close of
+// the previously prepared statement — does not race a concurrent claim.
+func claimJobStmt(ctx context.Context, jobTypes []string, gen uint64) (func(context.Context, ...any) (*jobqueue.Job, error), error) {
+	claimJobStmtMtx.Lock()
+	defer claimJobStmtMtx.Unlock()
+
+	if claimJobStmtQuery == nil || gen != claimJobStmtGen {
+		if claimJobStmtClose != nil {
+			// Clear the cache before closing the old statement so that, even if
+			// Close fails, we never leave a stale (closed-or-close-failed)
+			// statement cached at the old generation. The next call then rebuilds
+			// from scratch instead of closing the same statement again.
+			closeOld := claimJobStmtClose
+			claimJobStmtQuery, claimJobStmtClose = nil, nil
+			if err := closeOld(); err != nil {
+				return nil, err
+			}
+		}
+		query := buildClaimJobQuery(jobTypes, db.Conn(ctx))
+		queryFunc, closeStmt, err := db.QueryRowAsStmt[*jobqueue.Job](ctx, query)
+		if err != nil {
+			claimJobStmtQuery, claimJobStmtClose = nil, nil
+			return nil, err
+		}
+		claimJobStmtQuery, claimJobStmtClose, claimJobStmtGen = queryFunc, closeStmt, gen
+	}
+	return claimJobStmtQuery, nil
+}
+
 func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
@@ -409,68 +533,25 @@ func (j *jobworkerDB) StartNextJobOrNil(ctx context.Context) (job *jobqueue.Job,
 		return nil, jobqueue.ErrClosed
 	}
 
-	jobTypes := jobworker.RegisteredJobTypes()
+	jobTypes, gen := jobworker.RegisteredJobTypes()
+	if len(jobTypes) == 0 {
+		// No registered worker types: nothing this process can claim.
+		return nil, nil
+	}
 
-	err = db.Transaction(ctx, func(ctx context.Context) error {
-		now := time.Now()
-
-		// Use `skip locked` here because multiple workers compete for jobs
-		// and any unclaimed row will do. If a row is already locked by
-		// another worker, skipping it and grabbing the next one is correct.
-		// This is different from the bundle counter updates in SetJobError
-		// and SetJobResult where `for update` (blocking) is required
-		// because every completion must update that specific bundle row.
-		job, err = db.QueryRowAs[*jobqueue.Job](ctx,
-			/*sql*/ `
-				select *
-				from worker.job
-				where started_at is null
-					and (start_at is null or start_at <= $1)
-					and "type" = any($2::text[])
-				order by
-					priority desc,
-					created_at asc
-				limit 1
-				for update skip locked
-			`,
-			now,      // $1
-			jobTypes, // $2
-		)
-		if err != nil {
-			return sqldb.ReplaceErrNoRows(err, nil)
-		}
-
-		job.StartedAt.Set(now)
-		job.UpdatedAt = now
-		// Stamp worker_alive_at with the database clock (now()) rather than this
-		// process's clock, so the reaper's now()-based staleness comparison is
-		// immune to clock skew between worker processes and the database — even for
-		// a job that crashes before its first heartbeat tick. The written value is
-		// read back via RETURNING so the in-memory job matches the row.
-		//
-		// When heartbeats are disabled (HeartbeatInterval <= 0) worker_alive_at is
-		// deliberately left NULL: it would never advance, so a job that simply runs
-		// longer than deadFor would look crashed and be reset out from under a live
-		// worker (double execution). A NULL worker_alive_at makes the reaper's
-		// heartbeat-staleness branch (which requires worker_alive_at IS NOT NULL)
-		// inert, so disabled heartbeats mean no heartbeat-based reclamation.
-		return db.QueryRow(ctx,
-			/*sql*/ `
-				update worker.job
-				set started_at=$1,
-					worker_alive_at=case when $2 then now() else null end,
-					updated_at=$3
-				where id = $4
-				returning worker_alive_at
-			`,
-			job.StartedAt,                   // $1
-			jobworker.HeartbeatInterval > 0, // $2
-			job.UpdatedAt,                   // $3
-			job.ID,                          // $4
-		).Scan(&job.WorkerAliveAt)
-	})
+	claimJob, err := claimJobStmt(ctx, jobTypes, gen)
 	if err != nil {
 		return nil, err
+	}
+
+	// The claim statement is a single CTE that selects the next job
+	// (FOR UPDATE SKIP LOCKED) and marks it started atomically, so no explicit
+	// transaction is needed. `skip locked` lets workers compete: a row already
+	// locked by another worker is skipped rather than waited on. It takes no
+	// arguments (now() and inlined job types), so it runs as a prepared statement.
+	job, err = claimJob(ctx)
+	if err != nil {
+		return nil, sqldb.ReplaceErrNoRows(err, nil)
 	}
 	return job, nil
 }
@@ -754,6 +835,72 @@ func (j *jobworkerDB) SetJobStart(ctx context.Context, jobID uu.ID, startAt time
 	)
 }
 
+// setJobWorkerAliveStmt cache, guarded by setJobWorkerAliveMtx. The heartbeat
+// query is constant — only the job id varies, as a bind parameter — so it is
+// prepared once and reused for the process lifetime.
+var (
+	setJobWorkerAliveMtx   sync.Mutex
+	setJobWorkerAliveExec  func(ctx context.Context, args ...any) error
+	setJobWorkerAliveClose func() error
+)
+
+// setJobWorkerAliveStmt returns the cached prepared heartbeat statement,
+// preparing it on first use. The returned exec func wraps a pool-safe *sql.Stmt
+// (database/sql re-prepares it per pooled connection) and is safe to call
+// concurrently, as the heartbeat fires from one goroutine per in-flight job. A
+// failed prepare leaves the cache nil so the next heartbeat retries. The
+// statement is released by closeCachedStmts on jobworkerDB.Close.
+func setJobWorkerAliveStmt(ctx context.Context) (func(context.Context, ...any) error, error) {
+	setJobWorkerAliveMtx.Lock()
+	defer setJobWorkerAliveMtx.Unlock()
+
+	if setJobWorkerAliveExec == nil {
+		// Only update worker_alive_at while the job is actually being processed
+		// (claimed but not yet stopped). The guard prevents a heartbeat that races
+		// with job completion from resurrecting worker_alive_at on a stopped job.
+		// updated_at is bumped together so every UPDATE of worker.job advances it.
+		execFunc, closeStmt, err := db.ExecStmt(ctx,
+			/*sql*/ `
+				update worker.job
+				set worker_alive_at=now(), updated_at=now()
+				where id = $1
+					and started_at is not null
+					and stopped_at is null
+			`,
+		)
+		if err != nil {
+			return nil, err
+		}
+		setJobWorkerAliveExec = execFunc
+		setJobWorkerAliveClose = closeStmt
+	}
+	return setJobWorkerAliveExec, nil
+}
+
+// closeCachedStmts closes the package-level cached prepared statements (the claim
+// statement and the heartbeat statement) and resets them to nil so a later
+// InitJobQueue prepares them again. It is called from jobworkerDB.Close, after
+// the closed flag is set, so no new claim or heartbeat starts using them.
+func closeCachedStmts() error {
+	claimJobStmtMtx.Lock()
+	var errClaim error
+	if claimJobStmtClose != nil {
+		errClaim = claimJobStmtClose()
+		claimJobStmtQuery, claimJobStmtClose = nil, nil
+	}
+	claimJobStmtMtx.Unlock()
+
+	setJobWorkerAliveMtx.Lock()
+	var errAlive error
+	if setJobWorkerAliveClose != nil {
+		errAlive = setJobWorkerAliveClose()
+		setJobWorkerAliveExec, setJobWorkerAliveClose = nil, nil
+	}
+	setJobWorkerAliveMtx.Unlock()
+
+	return errors.Join(errClaim, errAlive)
+}
+
 func (j *jobworkerDB) SetJobWorkerAlive(ctx context.Context, jobID uu.ID) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobID)
 
@@ -761,21 +908,14 @@ func (j *jobworkerDB) SetJobWorkerAlive(ctx context.Context, jobID uu.ID) (err e
 		return jobqueue.ErrClosed
 	}
 
-	// Only update worker_alive_at while the job is actually being processed
-	// (claimed but not yet stopped). The guard prevents a heartbeat that
-	// races with job completion from resurrecting worker_alive_at on a stopped
-	// job. updated_at is bumped together with worker_alive_at so every UPDATE of
-	// worker.job advances updated_at.
-	return db.Exec(ctx,
-		/*sql*/ `
-			update worker.job
-			set worker_alive_at=now(), updated_at=now()
-			where id = $1
-				and started_at is not null
-				and stopped_at is null
-		`,
-		jobID, // $1
-	)
+	// The heartbeat fires repeatedly (every HeartbeatInterval per in-flight job),
+	// so it runs as a cached prepared statement with the job id as its only
+	// bind parameter.
+	exec, err := setJobWorkerAliveStmt(ctx)
+	if err != nil {
+		return err
+	}
+	return exec(ctx, jobID) // $1 = jobID
 }
 
 func (j *jobworkerDB) ScheduleRetry(ctx context.Context, jobID uu.ID, startAt time.Time, retryCount int) (err error) {

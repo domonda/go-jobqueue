@@ -5,6 +5,90 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.6.1] - 2026-06-18
+
+Faster job claiming via a cached prepared statement, a dedicated claim index,
+clock-skew-immune claim timestamps, and dependency updates.
+
+### Added
+
+- Partial index **`worker_job_claim_idx`** on
+  `worker.job ("type", priority desc, created_at asc) where started_at is null`,
+  backing the `StartNextJobOrNil` claim query — the hottest query in the queue.
+  The partial predicate confines the index to the pending backlog (so it stays
+  small as finished jobs accumulate), the leading `"type"` prunes to the
+  registered types in the `in (...)` list, and the `priority desc, created_at asc`
+  ordering matches the claim's `ORDER BY` so `limit 1` stops at the first unlocked
+  row with no sort step.
+
+### Changed
+
+- **BREAKING (API):** `jobworker.RegisteredJobTypes()` now returns
+  `(jobTypes []string, generation uint64)` instead of `notnull.StringArray`. The
+  returned slice is a **cached, sorted, shared** value and **must not be mutated**
+  by the caller. The `generation` counter is bumped on every `Register`/
+  `Unregister` call (normally only at startup), so a consumer can cache a value
+  derived from the types and rebuild only when the generation differs — no
+  element-by-element comparison of the type sets.
+- `jobworkerdb` now claims and starts the next job in a **single CTE statement**
+  (`with claimed as (select … for update skip locked) update worker.job … from
+  claimed … returning worker.job.*`) with **no surrounding transaction**, run as a
+  **cached prepared statement**. The registered job types are inlined as SQL string
+  literals (`"type" in ('a','b')`, escaped via the connection's
+  `FormatStringLiteral`) instead of an `= any($n)` array parameter, so PostgreSQL
+  plans against the actual values. The statement is prepared once per process and
+  re-prepared only when workers are registered or unregistered (normally
+  startup-only). The per-heartbeat
+  `SetJobWorkerAlive` update is likewise a cached prepared statement, and both are
+  released on `Close`.
+- Job-claim timestamps now use the **database clock** (`now()`): `started_at`,
+  `updated_at`, `worker_alive_at`, and the `start_at <= now()` comparison are all
+  evaluated server-side within the one claim statement, making job claiming immune
+  to clock skew between worker processes and the database (consistent with the
+  crash-recovery reaper, which already compares against `now()`). Previously
+  `started_at` and `updated_at` were stamped from the worker process clock.
+
+### Dependencies
+
+- `github.com/domonda/go-sqldb` and `github.com/domonda/go-sqldb/pqconn`
+  v1.0.2 → v1.3.0 (provides the prepared-statement helpers `QueryRowAsStmt` /
+  `ExecStmt` and `FormatStringLiteral` this release builds on).
+- `github.com/domonda/go-errs` v1.0.1 → v1.0.3, `github.com/domonda/golog`
+  v1.0.5 → v1.1.1, and `github.com/domonda/go-types` updated, plus indirect
+  dependency updates.
+
+### For contributors
+
+- The registered-job-types set is cached in `jobworker` (`workerTypes` +
+  `workerTypesGeneration`, guarded by `workersMtx`) and invalidated on
+  `Register`/`Unregister`, so the common claim path takes a single read lock with
+  no allocation. `SetDataBase` and its backing `db` variable moved from
+  `jobworker/database.go` to `jobworker/config.go` (no API change).
+- `jobworkerdb` context keys switched from address-of-`int` sentinels to unexported
+  empty-struct key types, and `reflect.Ptr` usages were updated to
+  `reflect.Pointer`.
+
+### Migration
+
+Upgrading an existing database from `v0.6.0` requires adding the new claim index.
+No column or data changes are involved, so the code runs correctly without it —
+only the `StartNextJobOrNil` claim query is slower until the index exists. Apply
+it out-of-band:
+
+```sql
+-- Migration: v0.6.0 -> v0.6.1 (dedicated StartNextJobOrNil claim index)
+
+-- Partial index backing the StartNextJobOrNil claim query (the hottest query in
+-- the queue). The predicate confines it to the pending backlog, the leading
+-- "type" prunes to the registered types, and priority desc, created_at asc
+-- matches the claim's ORDER BY.
+-- Use CREATE INDEX CONCURRENTLY (outside a transaction block) so building it on a
+-- large, live table does not lock out job claims and inserts.
+create index concurrently if not exists worker_job_claim_idx
+    on worker.job ("type", priority desc, created_at asc)
+    where started_at is null;
+```
+
 ## [v0.6.0] - 2026-06-17
 
 Worker liveness heartbeat and safe, multi-process crash recovery.
@@ -128,5 +212,6 @@ commit;
 Last release before the worker liveness heartbeat work. See the git history for
 details of `v0.5.4` and earlier releases.
 
+[v0.6.1]: https://github.com/domonda/go-jobqueue/compare/v0.6.0...v0.6.1
 [v0.6.0]: https://github.com/domonda/go-jobqueue/compare/v0.5.4...v0.6.0
 [v0.5.4]: https://github.com/domonda/go-jobqueue/releases/tag/v0.5.4

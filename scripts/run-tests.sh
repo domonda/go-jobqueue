@@ -113,7 +113,7 @@ echo "==> Running tests (POSTGRES_DB=${db_name})..."
 export POSTGRES_DB="${db_name}"
 
 status=0
-go test ${verbose} -count 1 -timeout 120s "${extra_flags[@]+"${extra_flags[@]}"}" "${project_dir}/tests" || status=1
+go test ${verbose} -count 1 -timeout 120s "${extra_flags[@]+"${extra_flags[@]}"}" ./... || status=1
 
 if [[ ${status} -eq 0 ]]; then
     echo "==> All tests passed"

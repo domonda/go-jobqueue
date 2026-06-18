@@ -51,6 +51,14 @@ against a live database outside a transaction:
 	create index concurrently if not exists worker_job_bundle_id_idx
 		on worker.job(bundle_id) where bundle_id is not null;
 
+The fresh-install schema also ships a partial index backing the StartNextJobOrNil
+claim query (the hottest query in the queue). An upgraded database is missing it,
+so add it too — concurrently, against the live database outside a transaction.
+Until it exists job claiming still works correctly, only slower:
+
+	create index concurrently if not exists worker_job_claim_idx
+		on worker.job("type", priority desc, created_at asc) where started_at is null;
+
 Jobs that were mid-execution at the moment of that upgrade have a NULL
 worker_alive_at, which the in-progress branch of [InitJobQueueResetInterruptedJobs]
 skips (it only resets jobs with a stale, non-NULL heartbeat). Backfill their

@@ -5,10 +5,11 @@ import (
 	"time"
 
 	"github.com/domonda/go-errs"
-	"github.com/domonda/go-jobqueue"
-	"github.com/domonda/go-jobqueue/jobworker"
 	"github.com/domonda/go-sqldb/db"
 	rootlog "github.com/domonda/golog/log"
+
+	"github.com/domonda/go-jobqueue"
+	"github.com/domonda/go-jobqueue/jobworker"
 )
 
 var log = rootlog.NewPackageLogger()
@@ -24,6 +25,13 @@ var log = rootlog.NewPackageLogger()
 // worker_alive_at heartbeat instead to detect abandoned jobs: a job with a
 // stale worker_alive_at was abandoned by a crashed worker
 // (see [jobqueue.Job.WorkerAlive]).
+//
+// A process is expected to run a single active job-queue service at a time. The
+// claim and heartbeat prepared statements are cached in package-level state (not
+// per service instance) and are released by [jobworkerDB.Close], so to swap the
+// underlying database connection, Close the current service before calling
+// InitJobQueue again; do not run two services against different connections
+// concurrently, as the second init would reuse the first's cached statements.
 func InitJobQueue(ctx context.Context) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx)
 
@@ -166,16 +174,15 @@ func resetInterruptedRetryableJobs(ctx context.Context, deadFor time.Duration) (
 					result         =null,
 					worker_alive_at=null,
 					updated_at     =now()
-				where started_at is not null
+				where
+					started_at is not null
 					and (
 						(
 							-- Crashed mid-execution: heartbeat went stale.
 							stopped_at is null
 							and worker_alive_at is not null
 							and worker_alive_at < now() - make_interval(secs => $1)
-						)
-						or
-						(
+						) or (
 							-- Pre-heartbeat worker (rolling upgrade) that crashed
 							-- between SetJobError and ScheduleRetry. Current-version
 							-- SetJobError clamps current_retry_count to
