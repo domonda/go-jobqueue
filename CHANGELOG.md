@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.6.1] - 2026-06-18
+## [v0.7.0] - 2026-06-18
 
 Faster job claiming via a cached prepared statement, a dedicated claim index,
 clock-skew-immune claim timestamps, and dependency updates.
@@ -18,8 +18,10 @@ clock-skew-immune claim timestamps, and dependency updates.
   The partial predicate confines the index to the pending backlog (so it stays
   small as finished jobs accumulate), the leading `"type"` prunes to the
   registered types in the `in (...)` list, and the `priority desc, created_at asc`
-  ordering matches the claim's `ORDER BY` so `limit 1` stops at the first unlocked
-  row with no sort step.
+  ordering matches the claim's `ORDER BY` so the scan yields rows in claim order:
+  for a single registered type `limit 1` stops at the first unlocked row with no
+  sort step, and for several types Postgres merges the per-type index streams
+  instead of sorting the whole backlog.
 
 ### Changed
 
@@ -30,6 +32,11 @@ clock-skew-immune claim timestamps, and dependency updates.
   `Unregister` call (normally only at startup), so a consumer can cache a value
   derived from the types and rebuild only when the generation differs — no
   element-by-element comparison of the type sets.
+- `jobworker.Register`, `RegisterFunc`, `RegisterFuncForJobType`, and `Unregister`
+  now **panic if called while worker threads are running** (after `StartThreads`).
+  Registration is startup-only: it mutates the registered-type set the cached claim
+  statement is keyed on, so changing it mid-run would race that cache. Code that
+  registers all workers before `StartThreads` is unaffected.
 - `jobworkerdb` now claims and starts the next job in a **single CTE statement**
   (`with claimed as (select … for update skip locked) update worker.job … from
   claimed … returning worker.job.*`) with **no surrounding transaction**, run as a
@@ -56,6 +63,9 @@ clock-skew-immune claim timestamps, and dependency updates.
 - `github.com/domonda/go-errs` v1.0.1 → v1.0.3, `github.com/domonda/golog`
   v1.0.5 → v1.1.1, and `github.com/domonda/go-types` updated, plus indirect
   dependency updates.
+- Go toolchain **1.25.5 → 1.26.0** (the `go` directive in `go.mod` and
+  `tools/go.mod`, and the CI `setup-go` version), so building this module now
+  requires Go 1.26.0 or newer.
 
 ### For contributors
 
@@ -67,6 +77,11 @@ clock-skew-immune claim timestamps, and dependency updates.
 - `jobworkerdb` context keys switched from address-of-`int` sentinels to unexported
   empty-struct key types, and `reflect.Ptr` usages were updated to
   `reflect.Pointer`.
+- Static analysis (`go vet`, `revive`, `gosec`) now runs before the database setup
+  in `scripts/run-tests.sh` (skip with `-s`). `revive` and `gosec` are pinned in a
+  separate `tools/go.mod` module (kept out of importers' dependency graph) and
+  invoked via `go tool -modfile=tools/go.mod …`; `revive.toml` is report-only
+  (`warningCode=0`/`errorCode=0`). The test run now covers `./...`, not just `tests/`.
 
 ### Migration
 
@@ -76,7 +91,7 @@ only the `StartNextJobOrNil` claim query is slower until the index exists. Apply
 it out-of-band:
 
 ```sql
--- Migration: v0.6.0 -> v0.6.1 (dedicated StartNextJobOrNil claim index)
+-- Migration: v0.6.0 -> v0.7.0 (dedicated StartNextJobOrNil claim index)
 
 -- Partial index backing the StartNextJobOrNil claim query (the hottest query in
 -- the queue). The predicate confines it to the pending backlog, the leading
@@ -212,6 +227,6 @@ commit;
 Last release before the worker liveness heartbeat work. See the git history for
 details of `v0.5.4` and earlier releases.
 
-[v0.6.1]: https://github.com/domonda/go-jobqueue/compare/v0.6.0...v0.6.1
+[v0.7.0]: https://github.com/domonda/go-jobqueue/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/domonda/go-jobqueue/compare/v0.5.4...v0.6.0
 [v0.5.4]: https://github.com/domonda/go-jobqueue/releases/tag/v0.5.4

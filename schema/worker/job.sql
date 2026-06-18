@@ -49,7 +49,9 @@ create index worker_job_stopped_at_idx on worker.job(stopped_at);
 --   * `"type"` leading prunes to the registered types in the `in (...)` list, so
 --     disjoint worker fleets sharing one database skip each other's jobs.
 --   * `priority desc, created_at asc` matches the ORDER BY exactly (mixed
---     directions), so `limit 1` stops at the first unlocked match with no sort.
+--     directions): for a single registered type `limit 1` stops at the first
+--     unlocked match with no sort; for several types Postgres merges the per-type
+--     index streams in claim order instead of sorting the whole backlog.
 create index worker_job_claim_idx on worker.job("type", priority desc, created_at asc)
   where started_at is null;
 -- worker_alive_at is intentionally NOT indexed: the heartbeat rewrites it every
