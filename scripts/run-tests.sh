@@ -13,7 +13,12 @@ usage() {
     echo "Options:"
     echo "  -v          Verbose test output"
     echo "  -d          Destroy docker compose after tests"
+    echo "  -s          Skip static analysis (go vet, revive, gosec)"
     echo "  -h          Show this help"
+    echo ""
+    echo "Before the tests, the script runs static analysis (go vet, revive,"
+    echo "gosec) unless -s is given. revive and gosec are pinned in tools/go.mod"
+    echo "and run via 'go tool -modfile=tools/go.mod ...'."
     echo ""
     echo "Each test run creates a temporary database (test-jobqueue-XXXXXXXX),"
     echo "applies the schema, runs the tests, and drops the database."
@@ -26,20 +31,23 @@ usage() {
     echo "If no PostgreSQL instance is reachable, one is started via docker compose."
     echo ""
     echo "Examples:"
-    echo "  $0                    # Run all tests"
+    echo "  $0                    # Lint, then run all tests"
     echo "  $0 -v                 # Verbose test output"
     echo "  $0 -d                 # Destroy docker compose after tests"
+    echo "  $0 -s                 # Skip static analysis, run tests only"
     echo "  $0 -- -run TestReset  # Run only tests matching 'TestReset'"
     exit 0
 }
 
 verbose=""
 destroy_after=false
+skip_lint=false
 
-while getopts "vdh" opt; do
+while getopts "vdsh" opt; do
     case "${opt}" in
         v) verbose="-v" ;;
         d) destroy_after=true ;;
+        s) skip_lint=true ;;
         h) usage ;;
         *) usage ;;
     esac
@@ -53,6 +61,24 @@ fi
 extra_flags=("$@")
 
 cd "${project_dir}"
+
+# Static analysis: go vet, revive, gosec.
+# Runs before the database setup so lint failures are reported fast without
+# spinning up PostgreSQL. revive and gosec are pinned as tool dependencies in
+# tools/go.mod (a separate module, so they stay out of this module's dependency
+# graph for importers) and invoked via "go tool -modfile=tools/go.mod".
+# revive is configured (revive.toml) with warningCode=0/errorCode=0, so it only
+# reports and never fails the run, matching the domonda-service convention.
+if ! ${skip_lint}; then
+    echo "==> Vetting (go vet)"
+    go vet ./...
+
+    echo "==> Linting (revive)"
+    go tool -modfile=tools/go.mod revive -config revive.toml -formatter friendly ./...
+
+    echo "==> Security scanning (gosec)"
+    go tool -modfile=tools/go.mod gosec -quiet ./...
+fi
 
 # Connection parameters
 pg_host="${POSTGRES_HOST:-127.0.0.1}"
@@ -113,7 +139,7 @@ echo "==> Running tests (POSTGRES_DB=${db_name})..."
 export POSTGRES_DB="${db_name}"
 
 status=0
-go test ${verbose} -count 1 -timeout 120s "${extra_flags[@]+"${extra_flags[@]}"}" "${project_dir}/tests" || status=1
+go test ${verbose} -count 1 -timeout 120s "${extra_flags[@]+"${extra_flags[@]}"}" ./... || status=1
 
 if [[ ${status} -eq 0 ]]; then
     echo "==> All tests passed"

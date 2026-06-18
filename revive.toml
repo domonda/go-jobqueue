@@ -1,0 +1,111 @@
+# See https://github.com/mgechev/revive/blob/master/RULES_DESCRIPTIONS.md
+
+# When set to false, ignores files with "GENERATED" header, similar to golint
+ignoreGeneratedHeader = true
+
+# Sets the default severity to "warning"
+severity = "warning"
+
+# Sets the default failure confidence. This means that linting errors
+# with less than 0.8 confidence will be ignored.
+confidence = 0.8
+
+# Sets the error code for failures with severity "error"
+errorCode = 0
+
+# Sets the error code for failures with severity "warning"
+warningCode = 0
+
+# Enable all by default and then disable selected rules
+enableAllRules = true
+
+# Custom configurations
+[rule.unhandled-error]
+    arguments = [
+        # For some reason the package names are not always parsed correctly,
+        # so wildcard for package with regex .*
+
+        ".*\\.Builder\\.Write",
+        ".*\\.Builder\\.WriteByte",
+        ".*\\.Builder\\.WriteRune",
+        ".*\\.Builder\\.WriteString",
+
+        ".*\\.Buffer\\.Write",
+        ".*\\.Buffer\\.WriteByte",
+        ".*\\.Buffer\\.WriteRune",
+        ".*\\.Buffer\\.WriteString",
+
+        ".*\\.ResponseWriter\\.Write",
+
+        "fmt\\.Print",
+        "fmt\\.Printf",
+        "fmt\\.Println",
+        "fmt\\.Fprint",
+        "fmt\\.Fprintf",
+        "fmt\\.Fprintln",
+    ]
+
+[rule.defer]
+    arguments = [["call-chain", "method-call", "immediate-recover", "return"]]
+
+[rule.enforce-switch-style]
+    arguments = ["allowNoDefault"]
+
+[rule.error-strings]
+    arguments = ["errs.New", "errs.Errorf"]
+
+# Disabled rules
+[rule.exported]
+    Disabled = true
+[rule.blank-imports]
+    Disabled = true
+[rule.file-header]
+    Disabled = true
+[rule.max-public-structs]
+    Disabled = true
+[rule.line-length-limit]
+    Disabled = true
+[rule.function-length]
+    Disabled = true
+[rule.cognitive-complexity]
+    Disabled = true
+[rule.cyclomatic]
+    Disabled = true
+[rule.function-result-limit]
+    Disabled = true
+[rule.argument-limit]
+    Disabled = true
+[rule.package-comments]
+    Disabled = true
+[rule.empty-block]
+    Disabled = true
+[rule.confusing-naming]
+    Disabled = true
+[rule.get-return]
+    Disabled = true
+[rule.unnecessary-stmt]
+    Disabled = true
+[rule.add-constant]
+    Disabled = true
+[rule.empty-lines]
+    Disabled = true
+[rule.nested-structs]
+    Disabled = true
+[rule.import-shadowing]
+    Disabled = true
+[rule.flag-parameter]
+    Disabled = true
+[rule.comment-spacings]
+    Disabled = true
+[rule.unchecked-type-assertion]
+    Disabled = true
+[rule.unused-parameter]
+    Disabled = true
+[rule.unnecessary-format]
+    Disabled = true
+[rule.identical-switch-branches]
+    Disabled = true
+[rule.unsecure-url-scheme]
+    Disabled = true
+[rule.var-naming]
+    arguments = [[], [], [{skipPackageNameChecks = true}]]

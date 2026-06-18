@@ -36,6 +36,24 @@ create index worker_job_type_idx       on worker.job("type");
 create index worker_job_start_at_idx   on worker.job(start_at);
 create index worker_job_started_at_idx on worker.job(started_at);
 create index worker_job_stopped_at_idx on worker.job(stopped_at);
+-- Partial index backing StartNextJobOrNil, the hottest query in the queue: every
+-- worker poll runs it, with concurrent FOR UPDATE SKIP LOCKED contention. The
+-- claim selects the next unstarted job of a registered type and marks it started:
+--   where started_at is null and (start_at is null or start_at <= now())
+--     and "type" in (...) order by priority desc, created_at asc limit 1
+--     for update skip locked
+-- Column choices:
+--   * `where started_at is null` confines the index to the pending backlog, so it
+--     stays small as finished jobs accumulate instead of scanning every row of a
+--     type and filtering the already-started ones out.
+--   * `"type"` leading prunes to the registered types in the `in (...)` list, so
+--     disjoint worker fleets sharing one database skip each other's jobs.
+--   * `priority desc, created_at asc` matches the ORDER BY exactly (mixed
+--     directions): for a single registered type `limit 1` stops at the first
+--     unlocked match with no sort; for several types Postgres merges the per-type
+--     index streams in claim order instead of sorting the whole backlog.
+create index worker_job_claim_idx on worker.job("type", priority desc, created_at asc)
+  where started_at is null;
 -- worker_alive_at is intentionally NOT indexed: the heartbeat rewrites it every
 -- HeartbeatInterval for each in-progress job, and indexing it would defeat
 -- Postgres HOT updates (an indexed column changing forces a new index entry

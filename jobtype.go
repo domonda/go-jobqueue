@@ -17,7 +17,7 @@ func ReflectJobTypeOfPayload(payload any) string {
 // followed by a point and the type name.
 // Pointer types will be dereferenced.
 func JobTypeOfPayloadType(payloadType reflect.Type) string {
-	for payloadType.Kind() == reflect.Ptr {
+	for payloadType.Kind() == reflect.Pointer {
 		payloadType = payloadType.Elem()
 	}
 	return payloadType.PkgPath() + "." + payloadType.Name()

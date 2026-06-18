@@ -5,19 +5,11 @@ import (
 	"time"
 
 	"github.com/domonda/go-errs"
-	"github.com/domonda/go-jobqueue"
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
+
+	"github.com/domonda/go-jobqueue"
 )
-
-var db DataBase
-
-// SetDataBase sets the DataBase implementation used by the jobworker package.
-// It must be called during initialization before starting worker threads;
-// jobworkerdb.InitJobQueue does this automatically.
-func SetDataBase(newDB DataBase) {
-	db = newDB
-}
 
 // DataBase is the persistence backend the jobworker package needs in addition
 // to the jobqueue.Service interface. The jobworkerdb package provides the

@@ -88,6 +88,11 @@ jobworker.Register("custom-job", func(ctx context.Context, job *jobqueue.Job) (r
 })
 ```
 
+> **Register all workers during startup, before `StartThreads`.** `Register`,
+> `RegisterFunc`, `RegisterFuncForJobType`, and `Unregister` mutate the set of job
+> types that `jobworkerdb` caches a prepared claim statement against, so they
+> **panic if called while worker threads are running**.
+
 ### 4. Add Jobs to the Queue
 
 ```go
@@ -242,12 +247,16 @@ if err != nil {
 
 Worker pools can run in multiple processes against the same database — this is how you scale
 horizontally. Each process calls `jobworker.StartThreads` independently and they all compete for
-the same queue; every job is claimed atomically (`SELECT ... FOR UPDATE SKIP LOCKED`), so two
-workers never pick up the same available job at once. (A failed job is still retried, and a job
+the same queue; every job is claimed atomically by a single statement that row-locks the next
+job with `FOR UPDATE SKIP LOCKED`, so two workers never pick up the same available job at once. (A failed job is still retried, and a job
 abandoned by a crashed worker is reclaimed, but never run concurrently.)
 
 While a worker processes a job it advances the job's `worker_alive_at` heartbeat every
 `jobworker.HeartbeatInterval` (default 10s). If that worker crashes, the heartbeat goes stale.
+Set `HeartbeatInterval` once during startup, before `StartThreads`, and treat it as immutable:
+whether a claim records `worker_alive_at` is baked into the cached claim statement the first time
+a job is claimed, so toggling it across the `0` (heartbeats-off) boundary at runtime would desync
+the claim path from the reaper.
 
 To reclaim jobs abandoned by a crashed worker, initialize with the reaper variant and a grace
 period:
@@ -302,6 +311,11 @@ update worker.job
 set worker_alive_at=started_at, updated_at=now()
 where started_at is not null and stopped_at is null and worker_alive_at is null;
 ```
+
+This release also adds an optional performance index, `worker_job_claim_idx`, for the
+`StartNextJobOrNil` claim query. It is **not required for correctness** — the code runs without
+it, only the claim query is slower until it exists. See the [CHANGELOG](CHANGELOG.md) migration
+note for the `create index concurrently` statement.
 
 ### Queue Management
 
@@ -410,15 +424,19 @@ All errors are wrapped using `github.com/domonda/go-errs` for enhanced stack tra
 Tests require a PostgreSQL instance. The test script `scripts/run-tests.sh` handles
 everything automatically:
 
-1. **Connects to PostgreSQL** — checks if an instance is already running at
+1. **Runs static analysis** — `go vet`, `revive`, and `gosec` run first, before any database
+   setup, so lint failures fail fast (skip with `-s`). `revive` and `gosec` are pinned in a
+   separate `tools/go.mod` module and invoked via `go tool -modfile=tools/go.mod …`; `revive` is
+   report-only (`revive.toml`).
+2. **Connects to PostgreSQL** — checks if an instance is already running at
    `POSTGRES_HOST:POSTGRES_PORT` (from `.env.example`, default `127.0.0.1:5432`)
    with user `POSTGRES_USER` (default `postgres`). The user must have `CREATE DATABASE` privileges.
-2. **Starts Docker Compose** — if no PostgreSQL is reachable, starts one via `docker compose up`.
-3. **Creates a temporary database** — named `test-jobqueue-XXXXXXXX` (random suffix to prevent
+3. **Starts Docker Compose** — if no PostgreSQL is reachable, starts one via `docker compose up`.
+4. **Creates a temporary database** — named `test-jobqueue-XXXXXXXX` (random suffix to prevent
    collisions between parallel runs).
-4. **Applies the schema** — runs `schema/worker.sql` against the temporary database.
-5. **Runs the Go tests** — executes `go test` against the `tests/` package.
-6. **Drops the temporary database** — always cleaned up, even on test failure.
+5. **Applies the schema** — runs `schema/worker.sql` against the temporary database.
+6. **Runs the Go tests** — executes `go test ./...` (all packages, not just `tests/`).
+7. **Drops the temporary database** — always cleaned up, even on test failure.
 
 ```bash
 # Run all tests
@@ -429,6 +447,9 @@ everything automatically:
 
 # Destroy Docker Compose after tests (used in CI)
 ./scripts/run-tests.sh -d
+
+# Skip static analysis (go vet, revive, gosec), run tests only
+./scripts/run-tests.sh -s
 
 # Run specific tests
 ./scripts/run-tests.sh -- -run TestReset

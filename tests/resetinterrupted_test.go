@@ -22,7 +22,6 @@ func TestResetInterruptedRetryableJobs(t *testing.T) {
 	// Close any previous service to unlisten channels before re-initializing.
 	_ = jobqueue.Close()
 	setupDBConn(t)
-	ctx := t.Context()
 
 	const origin = "test-reset-interrupted"
 	t.Cleanup(func() {
@@ -39,7 +38,7 @@ func TestResetInterruptedRetryableJobs(t *testing.T) {
 	// NULL timestamp or error message.
 	insertJob := func(t *testing.T, id uu.ID, maxRetry, curRetry int, startedAt, stoppedAt, workerAliveAt, errorMsg any) {
 		t.Helper()
-		err := db.Exec(ctx,
+		err := db.Exec(t.Context(),
 			/*sql*/ `
 				insert into worker.job (
 					id, type, payload, priority, origin,
@@ -84,11 +83,11 @@ func TestResetInterruptedRetryableJobs(t *testing.T) {
 
 	// Re-init and run the reaper. Close first so the new service can re-listen.
 	_ = jobqueue.Close()
-	require.NoError(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, deadFor))
+	require.NoError(t, jobworkerdb.InitJobQueueResetInterruptedJobs(t.Context(), deadFor))
 
 	get := func(t *testing.T, jobID uu.ID) *jobqueue.Job {
 		t.Helper()
-		j, err := jobqueue.GetJob(ctx, jobID)
+		j, err := jobqueue.GetJob(t.Context(), jobID)
 		require.NoError(t, err)
 		return j
 	}
@@ -150,19 +149,18 @@ func TestResetInterruptedRetryableJobs(t *testing.T) {
 // that would rug-pull actively running jobs is rejected loudly instead of
 // silently corrupting state.
 func TestInitJobQueueResetInterruptedJobsValidatesDeadFor(t *testing.T) {
-	ctx := t.Context()
 
 	t.Run("non-positive deadFor is rejected", func(t *testing.T) {
-		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, 0))
-		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, -time.Second))
+		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(t.Context(), 0))
+		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(t.Context(), -time.Second))
 	})
 
 	t.Run("deadFor below 3×HeartbeatInterval is rejected", func(t *testing.T) {
 		// deadFor must be at least 3×HeartbeatInterval (one slow in-flight write
 		// plus one fully missed tick). Anything below that could reset live jobs.
 		require.Positive(t, jobworker.HeartbeatInterval)
-		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, jobworker.HeartbeatInterval/2))
-		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, jobworker.HeartbeatInterval))
-		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(ctx, 2*jobworker.HeartbeatInterval))
+		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(t.Context(), jobworker.HeartbeatInterval/2))
+		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(t.Context(), jobworker.HeartbeatInterval))
+		assert.Error(t, jobworkerdb.InitJobQueueResetInterruptedJobs(t.Context(), 2*jobworker.HeartbeatInterval))
 	})
 }

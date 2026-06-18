@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	defaultService Service = ServiceWithError(ErrNotInitialized)
+	defaultService = ServiceWithError(ErrNotInitialized)
 	serviceCtxKey  int
 )
 
