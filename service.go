@@ -64,6 +64,21 @@ type Service interface {
 	// GetJob retrieves a job by its ID.
 	GetJob(ctx context.Context, jobID uu.ID) (*Job, error)
 
+	// GetJobsWithTypeAndPayload returns all jobs in the queue that have the given
+	// type and a payload equal to the JSON-marshalled passed payload. The payload
+	// is compared as PostgreSQL jsonb, so the match is independent of object key
+	// order and insignificant whitespace. The stopped flag selects which jobs are
+	// returned: true for jobs that have stopped (finished, errored, or paused for a
+	// decision), false for jobs still to be processed. Returns an empty slice if
+	// none match.
+	GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) ([]*Job, error)
+
+	// HasJobWithTypeAndPayload reports whether any job exists with the given type and
+	// a payload equal to the JSON-marshalled payload (compared as jsonb, like
+	// GetJobsWithTypeAndPayload), filtered by stopped. It is the existence-only
+	// companion to GetJobsWithTypeAndPayload (SELECT EXISTS, no rows fetched).
+	HasJobWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (bool, error)
+
 	// DeleteJob deletes a job from the queue.
 	DeleteJob(ctx context.Context, jobID uu.ID) error
 
@@ -97,7 +112,8 @@ type Service interface {
 	GetAllJobsWithErrors(context.Context) ([]*Job, error)
 
 	// DeleteFinishedJobs deletes all successfully completed jobs without errors.
-	DeleteFinishedJobs(ctx context.Context) error
+	// If finishedFor is greater than zero, only jobs that have finished for at least the given duration are deleted.
+	DeleteFinishedJobs(ctx context.Context, finishedFor time.Duration) error
 
 	// Close closes the service and releases any resources.
 	Close() error
@@ -113,9 +129,28 @@ func GetJob(ctx context.Context, jobID uu.ID) (*Job, error) {
 	return GetService(ctx).GetJob(ctx, jobID)
 }
 
-// DeleteFinishedJobs deletes all successfully completed jobs using the service from the context or the default service.
-func DeleteFinishedJobs(ctx context.Context) error {
-	return GetService(ctx).DeleteFinishedJobs(ctx)
+// GetJobsWithTypeAndPayload returns all jobs in the queue with the given type and
+// a payload equal to the JSON-marshalled passed payload, filtered by stopped
+// (true for stopped jobs, false for jobs still to be processed), using the
+// service from the context or the default service.
+func GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) ([]*Job, error) {
+	return GetService(ctx).GetJobsWithTypeAndPayload(ctx, jobType, payload, stopped)
+}
+
+// HasJobWithTypeAndPayload reports whether any job exists with the given type and
+// a payload equal to the JSON-marshalled passed payload, filtered by stopped
+// (true for stopped jobs, false for jobs still to be processed), using the
+// service from the context or the default service.
+func HasJobWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (bool, error) {
+	return GetService(ctx).HasJobWithTypeAndPayload(ctx, jobType, payload, stopped)
+}
+
+// DeleteFinishedJobs deletes all successfully completed jobs without errors using
+// the service from the context or the default service. If finishedFor is greater
+// than zero, only jobs that have been finished for at least that duration are
+// deleted.
+func DeleteFinishedJobs(ctx context.Context, finishedFor time.Duration) error {
+	return GetService(ctx).DeleteFinishedJobs(ctx, finishedFor)
 }
 
 // ResetJob resets the processing state of a job in the queue

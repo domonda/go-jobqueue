@@ -33,13 +33,13 @@ type Job struct {
 	ID       uu.ID         `db:"id,primarykey" json:"id"`       // Unique identifier of the job (primary key)
 	BundleID uu.NullableID `db:"bundle_id"     json:"bundleId"` // ID of the JobBundle this job belongs to, or NULL for a standalone job
 
-	Type              string        `db:"type"     json:"type"`                           // CHECK(length("type") > 0 AND length("type") <= 100)
-	Payload           notnull.JSON  `db:"payload"  json:"payload"`                        // Job input data as JSON, passed to the registered worker
-	Priority          int64         `db:"priority" json:"priority"`                       // Higher priorities are started before lower ones
-	Origin            string        `db:"origin"   json:"origin"`                         // CHECK(length(origin) > 0 AND length(origin) <= 100)
-	MaxRetryCount     int           `db:"max_retry_count"   json:"maxRetryCount"`         // Maximum number of retries before the job is considered finally failed
-	CurrentRetryCount int           `db:"current_retry_count"   json:"currentRetryCount"` // Number of retries already attempted
-	StartAt           nullable.Time `db:"start_at" json:"startAt"`                        // If not NULL, earliest time to start the job
+	Type              string        `db:"type"                json:"type"`              // CHECK(length("type") > 0 AND length("type") <= 100)
+	Payload           notnull.JSON  `db:"payload"             json:"payload"`           // Job input data as JSON, passed to the registered worker
+	Priority          int64         `db:"priority"            json:"priority"`          // Higher priorities are started before lower ones
+	Origin            string        `db:"origin"              json:"origin"`            // CHECK(length(origin) > 0 AND length(origin) <= 100)
+	MaxRetryCount     int           `db:"max_retry_count"     json:"maxRetryCount"`     // Maximum number of retries before the job is considered finally failed
+	CurrentRetryCount int           `db:"current_retry_count" json:"currentRetryCount"` // Number of retries already attempted
+	StartAt           nullable.Time `db:"start_at"            json:"startAt"`           // If not NULL, earliest time to start the job
 
 	StartedAt     nullable.Time `db:"started_at"      json:"startedAt"`     // Time when started working on the job, or NULL when not started
 	WorkerAliveAt nullable.Time `db:"worker_alive_at" json:"workerAliveAt"` // Heartbeat updated periodically while a worker processes the job, NULL when not being processed. A stale value while StoppedAt is NULL indicates the worker crashed.
@@ -143,7 +143,7 @@ func NewJobWithPriority(
 	if jobType == "" {
 		return nil, errs.New("empty jobType")
 	}
-	payloadJSON, err := marshalPayload(payload)
+	payloadJSON, err := MarshalJobPayload(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -167,11 +167,16 @@ func NewJobWithPriority(
 	return job, nil
 }
 
-// marshalPayload returns the JSON text of a non-nil job payload. The JSON
+// MarshalJobPayload returns the JSON text of a non-nil job payload. The JSON
 // types, []byte and string, and pointers to the JSON types, are interpreted as
 // JSON text and validated with ValidatePayload. Everything else is marshalled
 // with encoding/json, which also validates and compacts the output of a
 // payload's own MarshalJSON method.
+//
+// It is the canonical conversion for a Job's Payload, used both when creating a
+// job and when matching jobs by payload in GetJobsWithTypeAndPayload and
+// HasJobWithTypeAndPayload, so that the stored and queried jsonb
+// representations are produced the same way.
 //
 // Every error matches ErrInvalidPayload and doesn't quote the payload, which can
 // be large or carry personal data, because callers log them. Errors of nil pointers
@@ -179,7 +184,10 @@ func NewJobWithPriority(
 // encoding/json's message, which may name a field or quote a single value such
 // as an invalid json.Number, and includes verbatim the error of any MarshalJSON
 // or MarshalText method it called, on the payload or on a value inside it.
-func marshalPayload(payload any) (notnull.JSON, error) {
+func MarshalJobPayload(payload any) (notnull.JSON, error) {
+	if payload == nil {
+		return nil, InvalidPayloadError("nil", nil)
+	}
 	// A nil pointer is a nil payload. Checking it first also lets the pointer
 	// cases below dereference without a nil check.
 	if v := reflect.ValueOf(payload); v.Kind() == reflect.Pointer && v.IsNil() {

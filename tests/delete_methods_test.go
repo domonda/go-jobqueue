@@ -48,12 +48,37 @@ func TestDeleteFinishedJobs(t *testing.T) {
 	insertTestBundle(t, bundleID, "test-delete-finished-bundle", origin)
 	insertTestBundledJob(t, bundledID, bundleID, "test-delete-finished-type", origin, time.Now())
 
-	require.NoError(t, jobqueue.DeleteFinishedJobs(t.Context()))
+	// finishedFor == 0 deletes all finished standalone jobs without errors.
+	require.NoError(t, jobqueue.DeleteFinishedJobs(t.Context(), 0))
 
 	assert.Equal(t, 0, countJobByID(t, finishedID), "a finished standalone job is deleted")
 	assert.Equal(t, 1, countJobByID(t, erroredID), "a job with an error is kept")
 	assert.Equal(t, 1, countJobByID(t, openID), "an unstopped job is kept")
 	assert.Equal(t, 1, countJobByID(t, bundledID), "a finished job in a bundle is kept")
+}
+
+func TestDeleteFinishedJobsFinishedFor(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const origin = "test-delete-finished-for"
+	t.Cleanup(func() {
+		_ = db.Exec(context.Background(), `delete from worker.job where origin = $1`, origin)
+	})
+
+	now := time.Now()
+	oldID := uu.IDFrom("e2a20000-0000-4000-8000-000000000001")    // stopped 2h ago -> deleted
+	recentID := uu.IDFrom("e2a20000-0000-4000-8000-000000000002") // stopped just now -> kept
+
+	insertTestJob(t, oldID, "test-delete-finished-for-type", origin, now.Add(-3*time.Hour), now.Add(-2*time.Hour), nil)
+	insertTestJob(t, recentID, "test-delete-finished-for-type", origin, now, now, nil)
+
+	// Only delete jobs that have been finished for at least one hour.
+	require.NoError(t, jobqueue.DeleteFinishedJobs(t.Context(), time.Hour))
+
+	assert.Equal(t, 0, countJobByID(t, oldID), "a job finished longer ago than finishedFor is deleted")
+	assert.Equal(t, 1, countJobByID(t, recentID), "a job finished more recently than finishedFor is kept")
 }
 
 func TestDeleteJobsFromOrigin(t *testing.T) {
