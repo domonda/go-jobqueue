@@ -31,6 +31,16 @@ func (doNothingService) GetJob(ctx context.Context, jobID uu.ID) (*Job, error) {
 	return nil, errors.New("DoNothingService.GetJob can't return jobs")
 }
 
+func (doNothingService) GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) ([]*Job, error) {
+	log.Info("DoNothingService.GetJobsWithTypeAndPayload").Log()
+	return nil, nil
+}
+
+func (doNothingService) HasJobWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (bool, error) {
+	log.Info("DoNothingService.HasJobWithTypeAndPayload").Log()
+	return false, nil
+}
+
 func (doNothingService) DeleteJob(ctx context.Context, jobID uu.ID) error {
 	log.Info("DoNothingService.DeleteJob").Log()
 	return nil
@@ -80,7 +90,7 @@ func (doNothingService) GetAllJobsWithErrors(context.Context) ([]*Job, error) {
 	return nil, nil
 }
 
-func (doNothingService) DeleteFinishedJobs(ctx context.Context) error {
+func (doNothingService) DeleteFinishedJobs(ctx context.Context, finishedFor time.Duration) error {
 	log.Info("DoNothingService.DeleteFinishedJobs").Log()
 	return nil
 }

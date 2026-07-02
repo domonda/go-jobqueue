@@ -31,13 +31,13 @@ type Job struct {
 	ID       uu.ID         `db:"id,primarykey" json:"id"`       // Unique identifier of the job (primary key)
 	BundleID uu.NullableID `db:"bundle_id"     json:"bundleId"` // ID of the JobBundle this job belongs to, or NULL for a standalone job
 
-	Type              string        `db:"type"     json:"type"`                           // CHECK(length("type") > 0 AND length("type") <= 100)
-	Payload           notnull.JSON  `db:"payload"  json:"payload"`                        // Job input data as JSON, passed to the registered worker
-	Priority          int64         `db:"priority" json:"priority"`                       // Higher priorities are started before lower ones
-	Origin            string        `db:"origin"   json:"origin"`                         // CHECK(length(origin) > 0 AND length(origin) <= 100)
-	MaxRetryCount     int           `db:"max_retry_count"   json:"maxRetryCount"`         // Maximum number of retries before the job is considered finally failed
-	CurrentRetryCount int           `db:"current_retry_count"   json:"currentRetryCount"` // Number of retries already attempted
-	StartAt           nullable.Time `db:"start_at" json:"startAt"`                        // If not NULL, earliest time to start the job
+	Type              string        `db:"type"                json:"type"`              // CHECK(length("type") > 0 AND length("type") <= 100)
+	Payload           notnull.JSON  `db:"payload"             json:"payload"`           // Job input data as JSON, passed to the registered worker
+	Priority          int64         `db:"priority"            json:"priority"`          // Higher priorities are started before lower ones
+	Origin            string        `db:"origin"              json:"origin"`            // CHECK(length(origin) > 0 AND length(origin) <= 100)
+	MaxRetryCount     int           `db:"max_retry_count"     json:"maxRetryCount"`     // Maximum number of retries before the job is considered finally failed
+	CurrentRetryCount int           `db:"current_retry_count" json:"currentRetryCount"` // Number of retries already attempted
+	StartAt           nullable.Time `db:"start_at"            json:"startAt"`           // If not NULL, earliest time to start the job
 
 	StartedAt     nullable.Time `db:"started_at"      json:"startedAt"`     // Time when started working on the job, or NULL when not started
 	WorkerAliveAt nullable.Time `db:"worker_alive_at" json:"workerAliveAt"` // Heartbeat updated periodically while a worker processes the job, NULL when not being processed. A stale value while StoppedAt is NULL indicates the worker crashed.
@@ -119,6 +119,68 @@ func (j *Job) String() string {
 	return fmt.Sprintf("Job %s, type %s, priority %d, created at %s from origin '%s' max retry count %d current retry count %d", j.ID, j.Type, j.Priority, j.CreatedAt, j.Origin, j.MaxRetryCount, j.CurrentRetryCount)
 }
 
+// MarshalJobPayload converts an arbitrary job payload value to notnull.JSON.
+//
+// Values that are already JSON (notnull.JSON, nullable.JSON, json.RawMessage,
+// []byte, string) are validated and used as-is; a json.Marshaler marshals
+// itself; any other value is marshalled with notnull.MarshalJSON. It returns an
+// error if the value cannot be represented as valid JSON.
+//
+// It is the canonical conversion for a Job's Payload, used both when creating a
+// job and when matching jobs by payload in GetJobsWithTypeAndPayload, so that the
+// stored and queried jsonb representations are produced the same way.
+func MarshalJobPayload(payload any) (notnull.JSON, error) {
+	switch x := payload.(type) {
+	case notnull.JSON:
+		if !x.Valid() {
+			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
+		}
+		return x, nil
+
+	case nullable.JSON:
+		payloadJSON := notnull.JSON(x)
+		if !payloadJSON.Valid() {
+			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
+		}
+		return payloadJSON, nil
+
+	case json.RawMessage:
+		payloadJSON := notnull.JSON(x)
+		if !payloadJSON.Valid() {
+			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
+		}
+		return payloadJSON, nil
+
+	case []byte:
+		payloadJSON := notnull.JSON(x)
+		if !payloadJSON.Valid() {
+			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
+		}
+		return payloadJSON, nil
+
+	case string:
+		payloadJSON := notnull.JSON(x)
+		if !payloadJSON.Valid() {
+			return nil, fmt.Errorf("job payload is not valid JSON: %#v", x)
+		}
+		return payloadJSON, nil
+
+	case json.Marshaler:
+		payloadJSON, err := x.MarshalJSON()
+		if err != nil {
+			return nil, fmt.Errorf("job payload is not valid JSON: %#v, error: %w", x, err)
+		}
+		return payloadJSON, nil
+
+	default:
+		payloadJSON, err := notnull.MarshalJSON(x)
+		if err != nil {
+			return nil, fmt.Errorf("job payload is not valid JSON: %#v, error: %w", x, err)
+		}
+		return payloadJSON, nil
+	}
+}
+
 // NewJobWithPriority creates a Job but does not add it to the queue.
 // The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
 // If startAt is not null then the job will not start before that time.
@@ -138,52 +200,9 @@ func NewJobWithPriority(
 		return nil, errors.New("nil job payload")
 	}
 
-	var (
-		payloadJSON notnull.JSON
-		err         error
-	)
-	switch x := payload.(type) {
-	case notnull.JSON:
-		payloadJSON = x
-		if !payloadJSON.Valid() {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
-		}
-
-	case nullable.JSON:
-		payloadJSON = notnull.JSON(x)
-		if !payloadJSON.Valid() {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
-		}
-
-	case json.RawMessage:
-		payloadJSON = notnull.JSON(x)
-		if !payloadJSON.Valid() {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
-		}
-
-	case []byte:
-		payloadJSON = notnull.JSON(x)
-		if !payloadJSON.Valid() {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
-		}
-
-	case string:
-		payloadJSON = notnull.JSON(x)
-		if !payloadJSON.Valid() {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", x)
-		}
-
-	case json.Marshaler:
-		payloadJSON, err = x.MarshalJSON()
-		if err != nil {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v, error: %w", x, err)
-		}
-
-	default:
-		payloadJSON, err = notnull.MarshalJSON(x)
-		if err != nil {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v, error: %w", x, err)
-		}
+	payloadJSON, err := MarshalJobPayload(payload)
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now()

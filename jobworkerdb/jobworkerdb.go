@@ -408,6 +408,71 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 	)
 }
 
+func (j *jobworkerDB) GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (jobs []*jobqueue.Job, err error) {
+	defer errs.WrapWithFuncParams(&err, ctx, jobType, payload, stopped)
+
+	if j.closed.Load() {
+		return nil, jobqueue.ErrClosed
+	}
+
+	// Marshal the payload with the same conversion used when a job is created so
+	// the queried JSON is produced the same way as the stored payload. The actual
+	// comparison is done by PostgreSQL's jsonb = jsonb operator, so the match is
+	// independent of object key order and insignificant whitespace.
+	payloadJSON, err := jobqueue.MarshalJobPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	// stopped selects the lifecycle state: stopped jobs have a non-NULL stopped_at,
+	// jobs still to be processed have a NULL stopped_at. The $3::boolean cast lets a
+	// single statement cover both cases ((stopped_at is not null) = $3).
+	return db.QueryRowsAsSlice[*jobqueue.Job](ctx,
+		/*sql*/ `
+			select *
+			from worker.job
+			where type = $1
+				and payload = $2
+				and (stopped_at is not null) = $3
+			order by created_at
+		`,
+		jobType,     // $1
+		payloadJSON, // $2
+		stopped,     // $3
+	)
+}
+
+func (j *jobworkerDB) HasJobWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (exists bool, err error) {
+	defer errs.WrapWithFuncParams(&err, ctx, jobType, payload, stopped)
+
+	if j.closed.Load() {
+		return false, jobqueue.ErrClosed
+	}
+
+	// Same payload marshalling and jsonb comparison as GetJobsWithTypeAndPayload;
+	// this is the existence-only companion, so it runs a SELECT EXISTS and fetches
+	// no rows.
+	payloadJSON, err := jobqueue.MarshalJobPayload(payload)
+	if err != nil {
+		return false, err
+	}
+
+	return db.QueryRowAs[bool](ctx,
+		/*sql*/ `
+			select exists (
+				select
+				from worker.job
+				where type = $1
+					and payload = $2
+					and (stopped_at is not null) = $3
+			)
+		`,
+		jobType,     // $1
+		payloadJSON, // $2
+		stopped,     // $3
+	)
+}
+
 // buildClaimJobQuery assembles the StartNextJobOrNil claim statement: a single
 // CTE that selects the next claimable job (FOR UPDATE SKIP LOCKED) and marks it
 // started, atomically and without any query parameters, returning the updated
@@ -981,20 +1046,36 @@ func (j *jobworkerDB) DeleteJobsOfType(ctx context.Context, jobType string) (err
 	)
 }
 
-func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
-	defer errs.WrapWithFuncParams(&err, ctx)
+func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context, finishedFor time.Duration) (err error) {
+	defer errs.WrapWithFuncParams(&err, ctx, finishedFor)
 
 	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
+	if finishedFor <= 0 {
+		return db.Exec(ctx,
+			/*sql*/ `
+				delete from worker.job
+				where stopped_at is not null
+					and	error_msg is null
+					and	bundle_id is null
+			`,
+		)
+	}
+
+	// Only delete jobs whose stopped_at is older than finishedFor, evaluated with
+	// the database clock (now() - make_interval) so the cutoff is immune to clock
+	// skew between the caller and the database.
 	return db.Exec(ctx,
 		/*sql*/ `
 			delete from worker.job
 			where stopped_at is not null
 				and	error_msg is null
 				and	bundle_id is null
+				and stopped_at < now() - make_interval(secs => $1)
 		`,
+		finishedFor.Seconds(), // $1
 	)
 }
 

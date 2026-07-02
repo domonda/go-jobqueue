@@ -42,6 +42,14 @@ func TestServiceMethodsAfterClose(t *testing.T) {
 		{"GetAllJobsStartedBefore", func() error { _, e := dbAPI.GetAllJobsStartedBefore(t.Context(), time.Now()); return e }},
 		{"GetAllJobsWithErrors", func() error { _, e := dbAPI.GetAllJobsWithErrors(t.Context()); return e }},
 		{"GetJob", func() error { _, e := dbAPI.GetJob(t.Context(), id); return e }},
+		{"GetJobsWithTypeAndPayload", func() error {
+			_, e := dbAPI.GetJobsWithTypeAndPayload(t.Context(), "test-closed-type", "{}", false)
+			return e
+		}},
+		{"HasJobWithTypeAndPayload", func() error {
+			_, e := dbAPI.HasJobWithTypeAndPayload(t.Context(), "test-closed-type", "{}", false)
+			return e
+		}},
 		{"GetJobBundle", func() error { _, e := dbAPI.GetJobBundle(t.Context(), id); return e }},
 		{"StartNextJobOrNil", func() error { _, e := dbAPI.StartNextJobOrNil(t.Context()); return e }},
 		{"SetJobError", func() error { return dbAPI.SetJobError(t.Context(), id, "boom", nullable.JSON{}) }},
@@ -52,7 +60,7 @@ func TestServiceMethodsAfterClose(t *testing.T) {
 		{"ResetJob", func() error { return dbAPI.ResetJob(t.Context(), id) }},
 		{"ResetJobs", func() error { return dbAPI.ResetJobs(t.Context(), uu.IDSlice{id}) }},
 		{"DeleteJob", func() error { return dbAPI.DeleteJob(t.Context(), id) }},
-		{"DeleteFinishedJobs", func() error { return dbAPI.DeleteFinishedJobs(t.Context()) }},
+		{"DeleteFinishedJobs", func() error { return dbAPI.DeleteFinishedJobs(t.Context(), 0) }},
 		{"DeleteJobsFromOrigin", func() error { return dbAPI.DeleteJobsFromOrigin(t.Context(), "test-closed") }},
 		{"DeleteJobsOfType", func() error { return dbAPI.DeleteJobsOfType(t.Context(), "test-closed-type") }},
 		{"DeleteJobBundle", func() error { return dbAPI.DeleteJobBundle(t.Context(), id) }},

@@ -32,9 +32,15 @@ func ServiceWithError(err error) Service {
 	return errService{err}
 }
 
-func (e errService) AddListener(context.Context, ServiceListener) error           { return e.err }
-func (e errService) AddJob(ctx context.Context, job *Job) error                   { return e.err }
-func (e errService) GetJob(ctx context.Context, jobID uu.ID) (*Job, error)        { return nil, e.err }
+func (e errService) AddListener(context.Context, ServiceListener) error    { return e.err }
+func (e errService) AddJob(ctx context.Context, job *Job) error            { return e.err }
+func (e errService) GetJob(ctx context.Context, jobID uu.ID) (*Job, error) { return nil, e.err }
+func (e errService) GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) ([]*Job, error) {
+	return nil, e.err
+}
+func (e errService) HasJobWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (bool, error) {
+	return false, e.err
+}
 func (e errService) DeleteJob(ctx context.Context, jobID uu.ID) error             { return e.err }
 func (e errService) ResetJob(ctx context.Context, jobID uu.ID) error              { return e.err }
 func (e errService) ResetJobs(ctx context.Context, jobIDs uu.IDs) error           { return e.err }
@@ -49,5 +55,7 @@ func (e errService) GetAllJobsWithErrors(context.Context) ([]*Job, error)       
 func (e errService) GetAllJobsStartedBefore(ctx context.Context, since time.Time) ([]*Job, error) {
 	return nil, e.err
 }
-func (e errService) DeleteFinishedJobs(ctx context.Context) error { return e.err }
-func (e errService) Close() error                                 { return e.err }
+func (e errService) DeleteFinishedJobs(ctx context.Context, finishedFor time.Duration) error {
+	return e.err
+}
+func (e errService) Close() error { return e.err }
