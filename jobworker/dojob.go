@@ -65,25 +65,30 @@ func DoJob(ctx context.Context, job *jobqueue.Job) (err error) {
 
 	result, jobErr := worker(jobCtx, job)
 	if jobErr != nil {
-		errorTitle := errs.Root(jobErr).Error()
-		if nl := strings.IndexByte(errorTitle, '\n'); nl > 0 {
-			// Only use first line of error message as errorTitle
-			errorTitle = errorTitle[:nl]
-		}
-		errorTitle = strings.TrimSpace(errorTitle)
+		// A cancelled job (e.g. during shutdown) is an expected interruption:
+		// doJobAndSaveResultInDB resets and retries it without consuming a retry
+		// attempt, so don't report it via OnError or log it as an error/warning.
+		if !errors.Is(jobErr, context.Canceled) {
+			errorTitle := errs.Root(jobErr).Error()
+			if nl := strings.IndexByte(errorTitle, '\n'); nl > 0 {
+				// Only use first line of error message as errorTitle
+				errorTitle = errorTitle[:nl]
+			}
+			errorTitle = strings.TrimSpace(errorTitle)
 
-		OnError(jobErr)
+			OnError(jobErr)
 
-		if job.CurrentRetryCount >= job.MaxRetryCount {
-			log.ErrorfCtx(jobCtx, "Job error: %s", errorTitle).
-				Any("job", job).
-				Err(jobErr).
-				Log()
-		} else {
-			log.WarnfCtx(jobCtx, "Job error: %s", errorTitle).
-				Any("job", job).
-				Err(jobErr).
-				Log()
+			if job.CurrentRetryCount >= job.MaxRetryCount {
+				log.ErrorfCtx(jobCtx, "Job error: %s", errorTitle).
+					Any("job", job).
+					Err(jobErr).
+					Log()
+			} else {
+				log.WarnfCtx(jobCtx, "Job error: %s", errorTitle).
+					Any("job", job).
+					Err(jobErr).
+					Log()
+			}
 		}
 
 		job.ErrorMsg.Set(jobErr.Error())

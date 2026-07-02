@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.1] - 2026-07-02
+
+Quieter shutdowns: a job dispatch cancelled during shutdown is no longer reported
+as an error.
+
+### Changed
+
+- A cancelled job (`context.Canceled`) is now treated as an expected interruption
+  rather than a failure. When a worker function returns a `context.Canceled` error
+  (directly or wrapped), or a job dispatch returns one because the worker-thread
+  context was cancelled (e.g. during shutdown), `jobworker` no longer invokes the
+  `OnError` callback or logs the "Job error" / "Error while dispatching the job"
+  lines at `ERROR`/`WARN`. The job is still reset and retried without consuming a
+  retry attempt, exactly as before — only the spurious error reporting is dropped.
+  Genuine failures and per-job `JobTimeout` (`context.DeadlineExceeded`) are
+  unaffected and still reported.
+
 ## [v0.7.0] - 2026-06-18
 
 Faster job claiming via a cached prepared statement, a dedicated claim index,
@@ -227,6 +244,7 @@ commit;
 Last release before the worker liveness heartbeat work. See the git history for
 details of `v0.5.4` and earlier releases.
 
+[v0.7.1]: https://github.com/domonda/go-jobqueue/compare/v0.7.0...v0.7.1
 [v0.7.0]: https://github.com/domonda/go-jobqueue/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/domonda/go-jobqueue/compare/v0.5.4...v0.6.0
 [v0.5.4]: https://github.com/domonda/go-jobqueue/releases/tag/v0.5.4

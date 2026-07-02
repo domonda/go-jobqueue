@@ -175,7 +175,9 @@ func worker(threadIndex int) {
 
 	for job := nextJob(ctx); job != nil; job = nextJob(ctx) {
 		err := doJobAndSaveResultInDB(ctx, job)
-		if err != nil {
+		// A cancelled dispatch is an expected shutdown interruption:
+		// the job is reset and retried, so don't report it as an error.
+		if err != nil && !errors.Is(err, context.Canceled) {
 			OnError(err)
 			log.ErrorCtx(ctx, "Error while dispatching the job").
 				Err(err).
