@@ -131,8 +131,29 @@ func (*jobworkerDB) unlisten(ctx context.Context) (err error) {
 	return errors.Join(err1, err2)
 }
 
+// insertJob inserts the job row, sanitizing the origin and payload because they
+// can carry user provided data that PostgreSQL cannot store. job.Type is
+// deliberately left verbatim. See the String Sanitization section of the package
+// documentation for what is removed and why Type is exempt.
+//
+// Two outcomes specific to this statement: an origin whose every character is
+// unstorable sanitizes to "" and fails check(length(origin) > 0), while a payload
+// with nothing storable left does NOT fail, because notnull.JSON binds a nil value
+// as the empty object and the job is stored with an empty payload.
 func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, job)
+
+	payload := sanitizedJSON(ctx, "jobID", job.ID, "payload", job.Payload)
+	origin := sanitizedString(ctx, "jobID", job.ID, "origin", job.Origin)
+
+	// A payload with nothing storable left must not be stored. notnull.JSON binds a
+	// nil value as the empty object, so without this the row would be written with
+	// payload {} and a worker would claim the job and act on an all-zero payload
+	// struct. Fail loudly instead, as an emptied origin and an unstorable Type
+	// already do — the caller passed data this queue cannot carry.
+	if len(job.Payload) > 0 && len(payload) == 0 {
+		return errs.New("job payload contained no characters PostgreSQL can store")
+	}
 
 	return db.Exec(ctx,
 		/*sql*/ `
@@ -160,9 +181,9 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 		job.ID,            // $1
 		job.BundleID,      // $2
 		job.Type,          // $3
-		job.Payload,       // $4
+		payload,           // $4
 		job.Priority,      // $5
-		job.Origin,        // $6
+		origin,            // $6
 		job.MaxRetryCount, // $7
 		job.StartAt,       // $8
 	)
@@ -230,6 +251,8 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		return nil
 	}
 
+	bundleOrigin := sanitizedString(ctx, "jobBundleID", jobBundle.ID, "origin", jobBundle.Origin)
+
 	return db.Transaction(ctx, func(ctx context.Context) error {
 		err = db.Exec(ctx,
 			/*sql*/ `
@@ -238,7 +261,7 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 			`,
 			jobBundle.ID,      // $1
 			jobBundle.Type,    // $2
-			jobBundle.Origin,  // $3
+			bundleOrigin,      // $3
 			jobBundle.NumJobs, // $4
 		)
 		if err != nil {
@@ -563,6 +586,31 @@ func (j *jobworkerDB) SetJobError(ctx context.Context, jobID uu.ID, errorMsg str
 		return jobqueue.ErrClosed
 	}
 
+	// Sanitize outside the transaction, so no scanning work is done while the
+	// bundle row below is locked.
+	//
+	// An error message must never end up empty: error_msg is a plain text column,
+	// so SQL would still read '' as errored (see GetAllJobsWithErrors and
+	// DeleteFinishedJobs), while Go reads it back through
+	// nullable.NonEmptyString, whose IsNull is `== ""`. Job.HasError would then
+	// report false and Job.Succeeded true for a job that actually failed, and
+	// DeleteFinishedJobs would never reap the row. Substitute a placeholder
+	// instead of letting sanitizing change the NULL-ness of the value.
+	// Distinguish the two ways the message can be empty here, because they mean
+	// different things to whoever reads the row: sanitizing removed everything, or
+	// the caller had nothing to say. Claiming the former for the latter would
+	// misreport the cause of the failure.
+	hadMessage := errorMsg != ""
+	errorMsg = sanitizedString(ctx, "jobID", jobID, "error message", errorMsg)
+	if errorMsg == "" {
+		if hadMessage {
+			errorMsg = "error message contained no characters PostgreSQL can store"
+		} else {
+			errorMsg = "job failed without an error message"
+		}
+	}
+	errorData = sanitizedJSON(ctx, "jobID", jobID, "error data", errorData)
+
 	return db.Transaction(ctx, func(ctx context.Context) error {
 		// SetJobError records a TERMINAL failure: the job has stopped and will
 		// not be retried. current_retry_count is clamped up to max_retry_count so
@@ -745,6 +793,11 @@ func (j *jobworkerDB) SetJobResult(ctx context.Context, jobID uu.ID, result null
 	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
+
+	// Sanitize before the empty check below, so that a result consisting only of
+	// characters PostgreSQL can't store falls back to the empty object instead of
+	// failing the update with empty JSON.
+	result = sanitizedJSON(ctx, "jobID", jobID, "result", result)
 
 	// if the result is `nil`, set an empty object so that the bundle knows the job existed correctly
 	if len(result) == 0 {
@@ -957,6 +1010,17 @@ func (j *jobworkerDB) DeleteJob(ctx context.Context, jobID uu.ID) (err error) {
 	)
 }
 
+// DeleteJobsFromOrigin deletes every job stored under exactly the given origin.
+//
+// The origin is matched verbatim, NOT sanitized the way insertJob sanitizes it on
+// write. That asymmetry is deliberate: sanitizing is not injective, so normalizing
+// a destructive unbounded key would let an origin containing unstorable characters
+// collapse onto a different, legitimate origin and delete its jobs — and it would
+// do so after any authorization the caller performed on the raw string. Deleting
+// too little is recoverable, deleting someone else's jobs is not.
+//
+// A job whose origin had to be sanitized on write is therefore reachable here only
+// by the sanitized string (or by ID).
 func (j *jobworkerDB) DeleteJobsFromOrigin(ctx context.Context, origin string) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, origin)
 
@@ -1048,6 +1112,11 @@ func (j *jobworkerDB) DeleteJobBundle(ctx context.Context, jobBundleID uu.ID) (e
 	)
 }
 
+// DeleteJobBundlesFromOrigin deletes every job bundle stored under exactly the
+// given origin, cascading to the bundle's jobs.
+//
+// The origin is matched verbatim and not sanitized, for the reason given on
+// DeleteJobsFromOrigin — more so here, because this delete cascades.
 func (j *jobworkerDB) DeleteJobBundlesFromOrigin(ctx context.Context, origin string) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, origin)
 
