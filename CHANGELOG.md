@@ -45,15 +45,31 @@ the job.
   worker registers for, and storing a rewritten one would queue a job no worker
   could ever claim.
 
-- An error message that sanitizes to empty is replaced by a placeholder rather than
+- An error message that ends up empty is replaced by a placeholder rather than
   stored as `''`, which would read back as SQL NULL through
   `nullable.NonEmptyString` and make a failed job report `Succeeded() == true`.
+  The two ways it can be empty get distinct texts, so the row does not claim
+  characters were removed when the caller simply had nothing to say.
+
+- Removing characters can join a backslash to the text behind it and form one of
+  the rejected escapes that was not in the input, so stripping repeats — a bounded
+  number of times rather than until stable. Crafted malformed JSON can chain those
+  seams so that each round exposes exactly one more, which would make the work
+  quadratic on the write path. A value still unstorable after the cap is malformed
+  JSON that PostgreSQL rejects on its own, so the write fails loudly instead.
 
 ### Added
 
 - A `WARN` log line whenever sanitizing actually removes characters, naming the
   job or bundle id, the field, and the number of bytes dropped, so that a stored
   value differing from what a producer sent is traceable instead of invisible.
+
+### Performance
+
+- Sanitizing runs on every job write and payloads can be large, so the
+  already-storable case — which is essentially every real payload — scans in place
+  and allocates nothing: 0 allocations for a 1MB payload, one allocation when
+  something is actually removed.
 
 ## [v0.7.1] - 2026-07-02
 
