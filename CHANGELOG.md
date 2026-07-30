@@ -5,6 +5,56 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.2] - 2026-07-30
+
+Jobs carrying user provided data that PostgreSQL cannot store are now persisted
+with the unstorable characters removed, instead of failing the write and losing
+the job.
+
+### Changed
+
+- **Writes that used to fail now succeed with characters removed.** `jobworkerdb`
+  strips what PostgreSQL cannot store from the job origin, payload, error message,
+  error data and result, and from the job bundle origin: zero bytes, invalid UTF-8,
+  and two escape sequences that jsonb rejects even though they are valid JSON —
+  the zero byte escape (what `encoding/json` emits for a zero byte inside a Go
+  string) and unpaired surrogates (what a browser's `JSON.stringify` emits for a
+  truncated emoji). Because both are accepted by `json.Valid`, nothing upstream
+  refused such a payload before and only the insert failed.
+
+  This is a behaviour change from fail-closed to silently transformed: a value read
+  back from the database may be missing characters that were present in the `Job`
+  passed to `Add`. The in-memory `Job` is never modified. Sanitizing deletes rather
+  than replaces, so it joins whatever surrounded a removed character — validate
+  values *after* sanitizing, not before, and see the `jobworkerdb` package docs for
+  the full list of consequences, including that sanitizing is not injective.
+
+- Sanitizing applies only to values being written, never to a value used to look
+  rows up. `DeleteJobsFromOrigin` and `DeleteJobBundlesFromOrigin` match their
+  argument verbatim, so a job whose origin had to be sanitized on write is
+  reachable by the sanitized string or by ID, but not by the original. Normalizing
+  a destructive unbounded key would be worse: sanitizing is not injective, so it
+  could collapse one origin onto another and delete jobs the caller never named.
+
+- A payload with nothing storable left now fails the write instead of being stored
+  as an empty object. `notnull.JSON` binds a nil value as `{}`, so such a job would
+  otherwise have been queued and dispatched to a worker as an all-zero payload.
+
+- `Job.Type` and `JobBundle.Type` are deliberately **not** sanitized, so an
+  unstorable type still fails the write loudly: `Job.Type` is the dispatch key a
+  worker registers for, and storing a rewritten one would queue a job no worker
+  could ever claim.
+
+- An error message that sanitizes to empty is replaced by a placeholder rather than
+  stored as `''`, which would read back as SQL NULL through
+  `nullable.NonEmptyString` and make a failed job report `Succeeded() == true`.
+
+### Added
+
+- A `WARN` log line whenever sanitizing actually removes characters, naming the
+  job or bundle id, the field, and the number of bytes dropped, so that a stored
+  value differing from what a producer sent is traceable instead of invisible.
+
 ## [v0.7.1] - 2026-07-02
 
 Quieter shutdowns: a job dispatch cancelled during shutdown is no longer reported
