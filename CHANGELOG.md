@@ -5,6 +5,37 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.3] - 2026-09-03
+
+Dependency-only release: every dependency moved to its latest stable version. No
+source file changed and no public API moved.
+
+### Changed
+
+- Direct dependencies updated: `go-errs` v1.0.3 → v1.0.4, `go-sqldb` and
+  `go-sqldb/pqconn` v1.3.0 → v1.4.0, `golog` v1.1.1 → v1.2.1, `go-types` to
+  `v0.0.0-20260902160716-5c6c50f32fcd`, and `testify` v1.11.1 → v1.12.1.
+
+- Job errors reported through Sentry get better. `go-errs` v1.0.4 gives wrapped
+  errors a `StackTrace() []uintptr` method in the `pkg/errors` shape, and `golog`
+  v1.2.0 makes `logsentry` surface a logged `Err` as a Sentry exception carrying
+  that stack trace, with the error text as the issue subtitle instead of
+  "(No error message)". A consumer running the Sentry log writer sees job failure
+  issues change shape without changing anything on their side.
+
+- `go-sqldb` v1.4.0 reworked `ScanDriverValue` into a best-effort converter that
+  mirrors the `database/sql` conversions, so scanning is more permissive than
+  before, not less.
+
+- Lint and security tooling in `tools/go.mod` updated: `revive` v1.15.0 → v1.16.0
+  and `gosec` v2.27.1 → v2.29.0. Neither reports a new finding on this codebase.
+
+  Two indirect modules cannot be pinned to a stable version because upstream has
+  published none: `go-types` has no semver tags at all, so it stays a
+  pseudo-version, and `go.yaml.in/yaml/v4` (pulled in through `go-types` and
+  `testify`) has only release candidates. `yaml/v4` is held at `v4.0.0-rc.4`, the
+  lowest release our own dependencies require, rather than the newest rc.
+
 ## [v0.7.2] - 2026-07-30
 
 Jobs carrying user provided data that PostgreSQL cannot store are now persisted
@@ -310,6 +341,8 @@ commit;
 Last release before the worker liveness heartbeat work. See the git history for
 details of `v0.5.4` and earlier releases.
 
+[v0.7.3]: https://github.com/domonda/go-jobqueue/compare/v0.7.2...v0.7.3
+[v0.7.2]: https://github.com/domonda/go-jobqueue/compare/v0.7.1...v0.7.2
 [v0.7.1]: https://github.com/domonda/go-jobqueue/compare/v0.7.0...v0.7.1
 [v0.7.0]: https://github.com/domonda/go-jobqueue/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/domonda/go-jobqueue/compare/v0.5.4...v0.6.0
