@@ -103,12 +103,17 @@ Three cases are not silently repaired, and fail the write instead. An origin
 consisting entirely of unstorable characters sanitizes to empty and violates the
 column's non-empty constraint. A payload with nothing storable left is rejected
 rather than stored as an empty object, which would otherwise be dispatched to a
-worker as an all-zero payload; so is a sanitized payload that
-[jobqueue.ValidatePayload] rejects (empty, invalid JSON or JSON null), which holds
-a hand-built Job to the payload rules NewJob applies. And an error message that sanitizes to empty is
+worker as an all-zero payload. And an error message that sanitizes to empty is
 replaced by a placeholder rather than stored empty, because an empty error_msg
 reads back as SQL NULL through nullable.NonEmptyString and would make a failed job
 look successful.
+
+Adding a job also applies [jobqueue.ValidatePayload] to its sanitized payload, so
+an empty, invalid or JSON null payload of a hand-built Job is rejected with an
+error wrapping [jobqueue.ErrInvalidPayload], as NewJob would reject it. The check
+runs before a job is ignored, run synchronously or stored, so all three modes
+accept the same payloads, and before a bundle's first row is inserted, so one
+rejected job fails the whole bundle.
 
 Consequences worth knowing before relying on this:
 

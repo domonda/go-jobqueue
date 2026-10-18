@@ -53,7 +53,8 @@ func TestNewJobBundle(t *testing.T) {
 		// not panic before NewJobWithPriority reports the nil payload.
 		descs := []jobqueue.JobDesc{{Payload: nil, Origin: "origin"}}
 		bundle, err := jobqueue.NewJobBundle(t.Context(), "bundleType", "bundleOrigin", descs, nullable.Time{})
-		require.ErrorContains(t, err, "nil job payload")
+		require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+		require.ErrorContains(t, err, "jobDescriptions[0]", "names the rejected description")
 		assert.Nil(t, bundle)
 	})
 

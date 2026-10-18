@@ -82,9 +82,9 @@ func TestNewJobWithPriority_ValidPayloads(t *testing.T) {
 
 func TestNewJobWithPriority_InvalidPayloads(t *testing.T) {
 	const (
-		invalidJSON    = "job payload is not valid JSON"
-		emptyPayload   = "empty job payload"
-		nullPayload    = "job payload is JSON null"
+		invalidJSON    = "invalid job payload: not valid JSON"
+		emptyPayload   = "invalid job payload: empty"
+		nullPayload    = "invalid job payload: JSON null"
 		cantMarshal    = "can't be marshalled to JSON"
 		marshalsToNull = "marshals to JSON null"
 	)
@@ -121,9 +121,9 @@ func TestNewJobWithPriority_InvalidPayloads(t *testing.T) {
 		{"default unmarshalable value", make(chan int), cantMarshal},
 		// A nil pointer is a nil payload, even when its type has a value
 		// receiver MarshalJSON that would panic when called through it.
-		{"nil *notnull.JSON", (*notnull.JSON)(nil), "nil job payload: *notnull.JSON"},
-		{"nil *nullable.JSON", (*nullable.JSON)(nil), "nil job payload: *nullable.JSON"},
-		{"nil struct pointer", (*structPayload)(nil), "nil job payload: *jobqueue_test.structPayload"},
+		{"nil *notnull.JSON", (*notnull.JSON)(nil), "invalid job payload: nil *notnull.JSON"},
+		{"nil *nullable.JSON", (*nullable.JSON)(nil), "invalid job payload: nil *nullable.JSON"},
+		{"nil struct pointer", (*structPayload)(nil), "invalid job payload: nil *jobqueue_test.structPayload"},
 		// A JSON null payload carries no data for the worker, which would
 		// run on a zero value just like with an empty payload.
 		{"null string", "null", nullPayload},
@@ -137,6 +137,7 @@ func TestNewJobWithPriority_InvalidPayloads(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			job, err := jobqueue.NewJobWithPriority(id, "jobType", "origin", tt.payload, 0, nullable.Time{})
+			require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
 			require.ErrorContains(t, err, tt.wantErr)
 			assert.Nil(t, job)
 		})
@@ -148,7 +149,7 @@ func TestNewJobWithPriority_InvalidPayloads(t *testing.T) {
 func TestNewJobWithPriority_ErrorsOmitPayload(t *testing.T) {
 	const secret = "jane.doe@example.com"
 	_, err := jobqueue.NewJobWithPriority(uu.IDFrom(testJobID), "jobType", "origin", `{"email":"`+secret, 0, nullable.Time{})
-	require.ErrorContains(t, err, "job payload is not valid JSON")
+	require.ErrorContains(t, err, "invalid job payload: not valid JSON")
 	assert.NotContains(t, err.Error(), secret)
 }
 
@@ -163,13 +164,15 @@ func TestNewJobWithPriority_ArgErrors(t *testing.T) {
 
 	t.Run("nil payload", func(t *testing.T) {
 		job, err := jobqueue.NewJobWithPriority(id, "jobType", "origin", nil, 0, nullable.Time{})
-		require.ErrorContains(t, err, "nil job payload")
+		require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+		require.ErrorContains(t, err, "invalid job payload: nil")
 		assert.Nil(t, job)
 	})
 
 	t.Run("nil payload is reported before an empty jobType", func(t *testing.T) {
 		job, err := jobqueue.NewJobWithPriority(id, "", "origin", nil, 0, nullable.Time{})
-		require.ErrorContains(t, err, "nil job payload")
+		require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+		require.ErrorContains(t, err, "invalid job payload: nil")
 		assert.Nil(t, job)
 	})
 }
@@ -222,6 +225,7 @@ func TestNewJobReflectType_NilPayload(t *testing.T) {
 	// The job type is derived from the payload type, which a nil payload
 	// lacks: it must be reported as an error, not panic.
 	job, err := jobqueue.NewJobReflectType(uu.IDFrom(testJobID), "origin", nil, nullable.Time{})
-	require.ErrorContains(t, err, "nil job payload")
+	require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+	require.ErrorContains(t, err, "invalid job payload: nil")
 	assert.Nil(t, job)
 }

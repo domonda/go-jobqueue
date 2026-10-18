@@ -138,7 +138,7 @@ func NewJobWithPriority(
 	// Checked before jobType, which NewJobReflectType and NewJobBundle derive
 	// from the payload, so a nil payload reports itself instead of an empty type.
 	if payload == nil {
-		return nil, errs.New("nil job payload")
+		return nil, errs.Errorf("%w: nil", ErrInvalidPayload)
 	}
 	if jobType == "" {
 		return nil, errs.New("empty jobType")
@@ -173,13 +173,14 @@ func NewJobWithPriority(
 // with encoding/json, which also validates and compacts the output of a
 // payload's own MarshalJSON method.
 //
-// Errors name the payload type but never quote the payload, which can be large
-// or carry personal data, because callers log them.
+// Every error wraps ErrInvalidPayload and never quotes the payload, which can be
+// large or carry personal data, because callers log them. Errors of nil pointers
+// and marshalled payloads name the payload type.
 func marshalPayload(payload any) (notnull.JSON, error) {
 	// A nil pointer is a nil payload. Checking it first also lets the pointer
 	// cases below dereference without a nil check.
 	if v := reflect.ValueOf(payload); v.Kind() == reflect.Pointer && v.IsNil() {
-		return nil, errs.Errorf("nil job payload: %T", payload)
+		return nil, errs.Errorf("%w: nil %T", ErrInvalidPayload, payload)
 	}
 
 	var payloadJSON []byte
@@ -204,11 +205,11 @@ func marshalPayload(payload any) (notnull.JSON, error) {
 	default:
 		marshalled, err := json.Marshal(x)
 		if err != nil {
-			return nil, errs.Errorf("job payload of type %T can't be marshalled to JSON: %w", payload, err)
+			return nil, errs.Errorf("%w: %T can't be marshalled to JSON: %w", ErrInvalidPayload, payload, err)
 		}
 		// json.Marshal output is valid and compact, so only null is left to check.
 		if bytes.Equal(marshalled, jsonNull) {
-			return nil, errs.Errorf("job payload of type %T marshals to JSON null", payload)
+			return nil, errs.Errorf("%w: %T marshals to JSON null", ErrInvalidPayload, payload)
 		}
 		return marshalled, nil
 	}
@@ -221,25 +222,26 @@ func marshalPayload(payload any) (notnull.JSON, error) {
 
 var jsonNull = []byte("null")
 
-// ValidatePayload returns an error if payload is not JSON text a job can
-// carry: an empty payload, invalid JSON or the JSON null value. A worker would
-// run on a zero value for any of them. NewJob and the job queue's write path
-// both apply it, so a hand-built Job is held to the same rules.
+// ValidatePayload returns an error wrapping ErrInvalidPayload if payload is not
+// JSON text a job can carry: an empty payload, invalid JSON or the JSON null
+// value. A worker would run on a zero value for any of them. NewJob and the job
+// queue's write path both apply it, so a hand-built Job is held to the same
+// rules. The error never quotes the payload.
 func ValidatePayload(payload []byte) (err error) {
 	// The payload is deliberately not passed as a parameter, which would quote
 	// it in the error.
 	defer errs.WrapWithFuncParams(&err)
 
 	if len(payload) == 0 {
-		return errs.New("empty job payload")
+		return errs.Errorf("%w: empty", ErrInvalidPayload)
 	}
 	// json.Valid and not notnull.JSON.Valid, which reports empty input as
 	// valid because it binds as {}.
 	if !json.Valid(payload) {
-		return errs.Errorf("job payload is not valid JSON (%d bytes)", len(payload))
+		return errs.Errorf("%w: not valid JSON (%d bytes)", ErrInvalidPayload, len(payload))
 	}
 	if bytes.Equal(bytes.TrimSpace(payload), jsonNull) {
-		return errs.New("job payload is JSON null")
+		return errs.Errorf("%w: JSON null", ErrInvalidPayload)
 	}
 	return nil
 }

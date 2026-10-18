@@ -16,6 +16,12 @@ const (
 
 	// ErrClosed is returned by Service operations after the service has been closed.
 	ErrClosed errs.Sentinel = "jobqueue is closed"
+
+	// ErrInvalidPayload is wrapped by every job payload rejection: from NewJob
+	// and its variants, ValidatePayload, and the job queue's write path. Test
+	// for it with errors.Is. A rejected payload is rejected again, so an
+	// operation that failed with it must not be retried unchanged.
+	ErrInvalidPayload errs.Sentinel = "invalid job payload"
 )
 
 var _ Service = errService{}
