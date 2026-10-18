@@ -25,30 +25,27 @@ const (
 )
 
 // InvalidPayloadError returns the error of a rejected job payload with the given
-// reason, for Service implementations that reject payloads. It matches
-// ErrInvalidPayload with errors.Is and unwraps to cause, which may be nil.
-// Unlike wrapping the sentinel with %w, the sentinel is not in its Unwrap chain,
-// so errs.Root, which log titles use, ends at the reason or the cause instead
-// of the bare "invalid job payload".
+// reason and an optional cause, for Service implementations that reject
+// payloads. It matches ErrInvalidPayload with errors.Is. It does not wrap the
+// sentinel or the cause: errs.Root, which log titles use, then ends at this
+// error with its reason instead of the bare "invalid job payload", and a cause
+// like context.Canceled from a MarshalJSON method can't make the rejection
+// look like a cancellation. The cause only contributes its message.
 func InvalidPayloadError(reason string, cause error) error {
-	return errs.WrapWithCallStackSkip(1, &invalidPayloadError{reason: reason, cause: cause})
-}
-
-type invalidPayloadError struct {
-	reason string
-	cause  error
-}
-
-func (e *invalidPayloadError) Error() string {
-	if e.cause != nil {
-		return string(ErrInvalidPayload) + ": " + e.reason + ": " + e.cause.Error()
+	if cause != nil {
+		reason += ": " + cause.Error()
 	}
-	return string(ErrInvalidPayload) + ": " + e.reason
+	return errs.WrapWithCallStackSkip(1, invalidPayloadError(reason))
 }
 
-func (*invalidPayloadError) Is(target error) bool { return target == ErrInvalidPayload }
+// invalidPayloadError is the reason of a rejected payload.
+type invalidPayloadError string
 
-func (e *invalidPayloadError) Unwrap() error { return e.cause }
+func (e invalidPayloadError) Error() string {
+	return string(ErrInvalidPayload) + ": " + string(e)
+}
+
+func (invalidPayloadError) Is(target error) bool { return target == ErrInvalidPayload }
 
 var _ Service = errService{}
 

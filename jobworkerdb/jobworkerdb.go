@@ -157,10 +157,12 @@ func checkPayload(job *jobqueue.Job, sanitized notnull.JSON) error {
 }
 
 // doJobWithPayload runs job synchronously with payload, its sanitized payload,
-// so the worker sees what it would read back from the database. The caller's
-// payload is restored afterwards; the results DoJob sets on the Job stay.
+// so the worker sees the bytes that would be stored, not the unstorable ones the
+// caller passed. PostgreSQL's jsonb may still normalize them on read, for
+// example numbers and key order. The caller's payload is restored afterwards;
+// the results DoJob sets on the Job stay.
 func doJobWithPayload(ctx context.Context, job *jobqueue.Job, payload notnull.JSON) error {
-	if len(payload) != len(job.Payload) {
+	if !bytes.Equal(payload, job.Payload) {
 		original := job.Payload
 		job.Payload = payload
 		defer func() { job.Payload = original }()

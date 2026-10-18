@@ -397,6 +397,27 @@ func TestAddValidatesHandBuiltPayloads(t *testing.T) {
 			assert.Equal(t, payload, job.Payload, "the caller's payload is restored")
 		})
 
+		t.Run("bundle job runs on its own sanitized payload", func(t *testing.T) {
+			// Each job of a synchronous bundle gets its own sanitized payload,
+			// and the caller's payloads are restored afterwards.
+			calls = 0
+			repairable := notnull.JSON(`{"b":"x` + rawNul + `z"}`)
+			jobs := []*jobqueue.Job{
+				{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000081"), Type: syncJobType, Origin: "test", Payload: notnull.JSON(`{"a":1}`)},
+				{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000082"), Type: syncJobType, Origin: "test", Payload: repairable},
+			}
+			require.NoError(t, jobqueue.AddBundle(ctx, &jobqueue.JobBundle{
+				ID:      uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000083"),
+				Type:    "test-add-invalid-payload-sync-bundle-type",
+				Origin:  "test",
+				NumJobs: 2,
+				Jobs:    jobs,
+			}))
+			assert.Equal(t, 2, calls)
+			assert.JSONEq(t, `{"b":"xz"}`, gotPayload, "the last job ran on its sanitized payload")
+			assert.Equal(t, repairable, jobs[1].Payload, "the caller's payload is restored")
+		})
+
 		t.Run("bundle with a null payload runs no job", func(t *testing.T) {
 			// The valid first job must not run either: the whole bundle is
 			// validated before any of its jobs is executed.

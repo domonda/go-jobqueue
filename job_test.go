@@ -1,6 +1,7 @@
 package jobqueue_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -41,6 +42,11 @@ func (marshalerInvalid) MarshalJSON() ([]byte, error) { return []byte(`{invalid`
 type marshalerNull struct{}
 
 func (marshalerNull) MarshalJSON() ([]byte, error) { return []byte(" null "), nil }
+
+// marshalerCanceled returns context.Canceled, an error with meaning to DoJob.
+type marshalerCanceled struct{}
+
+func (marshalerCanceled) MarshalJSON() ([]byte, error) { return nil, context.Canceled }
 
 // structPayload exercises the default (reflection-marshalled) case.
 type structPayload struct {
@@ -147,11 +153,25 @@ func TestNewJobWithPriority_InvalidPayloads(t *testing.T) {
 
 // TestNewJobWithPriority_ErrorRootKeepsReason pins that errs.Root of a payload
 // error, which DoJob uses as a failed job's log title, is the reason and not the
-// bare "invalid job payload" of the ErrInvalidPayload sentinel.
+// bare "invalid job payload" of the ErrInvalidPayload sentinel, also when a
+// MarshalJSON error caused it.
 func TestNewJobWithPriority_ErrorRootKeepsReason(t *testing.T) {
 	_, err := jobqueue.NewJobWithPriority(uu.IDFrom(testJobID), "jobType", "origin", "null", 0, nullable.Time{})
 	require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
-	assert.Contains(t, errs.Root(err).Error(), "JSON null")
+	assert.Equal(t, "invalid job payload: JSON null", errs.Root(err).Error())
+
+	_, err = jobqueue.NewJobWithPriority(uu.IDFrom(testJobID), "jobType", "origin", marshalerErr{}, 0, nullable.Time{})
+	require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+	assert.Contains(t, errs.Root(err).Error(), "invalid job payload: jobqueue_test.marshalerErr can't be marshalled to JSON")
+}
+
+// TestNewJobWithPriority_ErrorHidesCauseIdentity pins that a MarshalJSON error is
+// not wrapped: a context.Canceled from it would otherwise make DoJob treat a
+// permanent rejection as a cancellation and reset the job without end.
+func TestNewJobWithPriority_ErrorHidesCauseIdentity(t *testing.T) {
+	_, err := jobqueue.NewJobWithPriority(uu.IDFrom(testJobID), "jobType", "origin", marshalerCanceled{}, 0, nullable.Time{})
+	require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+	assert.NotErrorIs(t, err, context.Canceled)
 }
 
 // TestNewJobWithPriority_ErrorsOmitPayload pins that a rejected payload is not

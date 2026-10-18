@@ -226,7 +226,8 @@ var jsonNull = []byte("null")
 // JSON text a job can carry: an empty payload, invalid JSON or the JSON null
 // value. A worker would run on a zero value for any of them. NewJob and the job
 // queue's write path both apply it, so a hand-built Job is held to the same
-// rules. The error never quotes the payload.
+// rules, except that the write path counts a raw zero byte as a space because
+// it removes zero bytes when sanitizing. The error never quotes the payload.
 func ValidatePayload(payload []byte) (err error) {
 	// The payload is deliberately not passed as a parameter, which would quote
 	// it in the error.

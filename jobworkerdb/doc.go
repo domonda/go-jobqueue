@@ -117,9 +117,14 @@ break the JSON structure are rejected rather than sanitized into a different
 value. The check runs before a job is ignored, run synchronously or stored, so all
 three modes accept the same payloads, and before a bundle's first row is inserted,
 so a job with a rejected payload fails the whole bundle. A synchronous run gets
-the sanitized payload, as a worker would read it back from the database. A number
-beyond the range of PostgreSQL's numeric type passes the check and fails only on
-insert.
+the sanitized payload that would be stored, which jsonb may still normalize on
+read, for example numbers and key order.
+
+Sanitizing changes the content of strings, and that includes object keys: keys
+that differ only in removed characters become equal, and jsonb keeps the last of
+duplicate keys. Numbers are stored as PostgreSQL's numeric type: a number beyond
+its range fails the insert, and a huge exponent can expand far beyond its
+written size when the row is read.
 
 Consequences worth knowing before relying on this:
 
