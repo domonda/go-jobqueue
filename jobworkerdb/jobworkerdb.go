@@ -136,10 +136,10 @@ func (*jobworkerDB) unlisten(ctx context.Context) (err error) {
 // deliberately left verbatim. See the String Sanitization section of the package
 // documentation for what is removed and why Type is exempt.
 //
-// Two outcomes specific to this statement: an origin whose every character is
-// unstorable sanitizes to "" and fails check(length(origin) > 0), while a payload
-// with nothing storable left does NOT fail, because notnull.JSON binds a nil value
-// as the empty object and the job is stored with an empty payload.
+// Both outcomes specific to this statement fail the insert: an origin whose
+// every character is unstorable sanitizes to "" and fails
+// check(length(origin) > 0), and a payload with nothing storable left is
+// rejected before the statement runs (see the guard below).
 func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, job)
 
