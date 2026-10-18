@@ -74,7 +74,9 @@ including for hand-built `Job` values, with an error matching the new
   removed characters equal (jsonb keeps the last of duplicate keys).
 
 - `NewJob` payload errors no longer quote the payload, which can be large or
-  carry personal data. The errors of `jobqueue.Add` and `AddBundle` still list
+  carry personal data. The error of a payload that can't be marshalled keeps
+  `encoding/json`'s message, which can name a field or quote a single value,
+  such as an invalid `json.Number`. The errors of `jobqueue.Add` and `AddBundle` still list
   the job or bundle in their call context, payload included, as before.
 
 - `NewJobBundle` errors name the rejected description, as in
