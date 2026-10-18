@@ -11,14 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 this module now requires Go 1.27.0. Job payloads are validated more strictly and
 in one place: `NewJob` and `jobqueue.Add`/`AddBundle` with the PostgreSQL service
 now reject an empty, invalid or JSON `null` payload and a nil pointer payload,
-including for hand-built `Job` values, with an error wrapping the new
+including for hand-built `Job` values, with an error matching the new
 `jobqueue.ErrInvalidPayload`.
 
 ### Added
 
-- `jobqueue.ErrInvalidPayload`, wrapped by every payload rejection; test for it
+- `jobqueue.ErrInvalidPayload`, matched by every payload rejection; test for it
   with `errors.Is`. A rejected payload is rejected again, so don't retry it
-  unchanged.
+  unchanged. `jobqueue.InvalidPayloadError(reason, cause)` creates such an error
+  for `Service` implementations; `errs.Root` of it is the reason, not the bare
+  sentinel, so log titles keep it.
 
 - `jobqueue.ValidatePayload(payload []byte) error`, the payload rules `NewJob`
   and the queue apply: it rejects an empty payload ("invalid job payload:
@@ -51,17 +53,24 @@ including for hand-built `Job` values, with an error wrapping the new
   queued as `{}` and is now rejected as an empty payload.
 
 - **Breaking:** `jobqueue.Add` and `jobqueue.AddBundle` with the PostgreSQL
-  service check every job's payload, after sanitizing, with `ValidatePayload`, so
-  a hand-built `Job` with an empty, invalid or `null` payload fails instead of
-  being stored as `{}` or jsonb `null`. A payload that sanitizing repairs still
-  works. The check runs before a job is ignored (`ContextWithIgnoreJob`,
-  `ContextWithIgnoreJobType`, `ContextWithIgnoreJobBundle`), run in a
-  `ContextWithSynchronousJobs` context or stored, so all three modes accept the
-  same payloads and tests that stub enqueueing see the same rejections. A bundle
-  is checked as a whole before its first row is inserted: one rejected job fails
-  the bundle, also inside a caller's outer transaction. A payload with nothing
-  storable left reports "invalid job payload: no characters PostgreSQL can
-  store".
+  service check every job's payload with `ValidatePayload`, so a hand-built `Job`
+  with an empty, invalid or `null` payload fails instead of being stored as `{}`
+  or jsonb `null`. The check applies to the payload the caller passed, with a raw
+  zero byte counted as a space: a zero byte inside a string is still removed by
+  sanitizing and the job stored, but bytes that break the JSON structure, like
+  invalid UTF-8 in a number, are rejected instead of being sanitized into a
+  different value. The check runs before a job is ignored
+  (`ContextWithIgnoreJob`, `ContextWithIgnoreJobType`,
+  `ContextWithIgnoreJobBundle`), run in a `ContextWithSynchronousJobs` context or
+  stored, so all three modes accept the same payloads and tests that stub
+  enqueueing see the same rejections. A synchronous run gets the sanitized
+  payload, as its worker would read it from the database, and the caller's
+  payload is restored afterwards. A bundle is checked as a whole before its first
+  row is inserted: a job with a rejected payload fails the bundle, also inside a
+  caller's outer transaction. A payload with nothing storable left reports
+  "invalid job payload: no characters PostgreSQL can store". A number beyond the
+  range of PostgreSQL's numeric type still fails only on insert, with a database
+  error.
 
 - `NewJob` payload errors no longer quote the payload, which can be large or
   carry personal data. The errors of `jobqueue.Add` and `AddBundle` still list
