@@ -80,6 +80,11 @@ including for hand-built `Job` values, with an error matching the new
 - `NewJobBundle` errors name the rejected description, as in
   `jobDescriptions[2] of type "my-job": invalid job payload: JSON null`.
 
+- `NewJob` now returns a nil job with its error for payloads it used to accept
+  (nil maps, slices and pointers, `null`). Code that discards the error, as in
+  `job, _ := jobqueue.NewJob(...)`, and passes the nil job to `jobqueue.Add`
+  panics: check the error.
+
 - The rules apply to jobs added by this release. Jobs queued by an earlier
   release or written by other producers can still carry a `null` payload. To
   find unfinished ones before upgrading workers:
