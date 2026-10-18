@@ -320,6 +320,8 @@ func TestSanitizeJSONPreservesNull(t *testing.T) {
 // binding one would fail the write — and inside SetJobError that failure rolls
 // back the transaction, skipping the bundle's num_jobs_stopped increment and
 // leaving the bundle unable to ever complete. nil is safe for both JSON types.
+// Since go-types v1.0.0-beta.2 both JSON types also bind a zero-length value like
+// nil, but sanitizeJSON must not depend on its argument type's Valuer for that.
 func TestSanitizeJSONNeverReturnsZeroLength(t *testing.T) {
 	inputs := map[string]string{
 		"already empty but non-nil": "",
@@ -328,8 +330,9 @@ func TestSanitizeJSONNeverReturnsZeroLength(t *testing.T) {
 	}
 	for name, input := range inputs {
 		t.Run(name, func(t *testing.T) {
-			require.False(t, nullable.JSON(input).IsNull(),
-				"the input itself must not already be NULL, or this proves nothing")
+			// Not IsNull: since go-types v1.0.0-beta.2 it is also true for empty values.
+			require.NotNil(t, []byte(nullable.JSON(input)),
+				"the input itself must not already be nil, or this proves nothing")
 
 			got := sanitizeJSON(nullable.JSON(input))
 			assert.Nil(t, []byte(got), "must be nil, not a zero-length slice")
