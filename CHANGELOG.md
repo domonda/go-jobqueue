@@ -19,8 +19,8 @@ including for hand-built `Job` values, with an error matching the new
 - `jobqueue.ErrInvalidPayload`, matched by every payload rejection; test for it
   with `errors.Is`. A rejected payload is rejected again, so don't retry it
   unchanged. `jobqueue.InvalidPayloadError(reason, cause)` creates such an error
-  for `Service` implementations; `errs.Root` of it is the reason, not the bare
-  sentinel, so log titles keep it.
+  for `Service` implementations. It doesn't wrap the sentinel or the cause, so
+  `errs.Root` and log titles keep the reason instead of the bare sentinel.
 
 - `jobqueue.ValidatePayload(payload []byte) error`, the payload rules `NewJob`
   and the queue apply: it rejects an empty payload ("invalid job payload:
@@ -64,13 +64,14 @@ including for hand-built `Job` values, with an error matching the new
   `ContextWithIgnoreJobBundle`), run in a `ContextWithSynchronousJobs` context or
   stored, so all three modes accept the same payloads and tests that stub
   enqueueing see the same rejections. A synchronous run gets the sanitized
-  payload, as its worker would read it from the database, and the caller's
-  payload is restored afterwards. A bundle is checked as a whole before its first
+  payload that would be stored (jsonb may still normalize numbers and key order
+  on read), and the caller's payload is restored afterwards. A bundle is checked as a whole before its first
   row is inserted: a job with a rejected payload fails the bundle, also inside a
   caller's outer transaction. A payload with nothing storable left reports
-  "invalid job payload: no characters PostgreSQL can store". A number beyond the
-  range of PostgreSQL's numeric type still fails only on insert, with a database
-  error.
+  "invalid job payload: no characters PostgreSQL can store". Not covered by the
+  check: a number beyond the range of PostgreSQL's numeric type fails on insert
+  with a database error, and sanitizing can make object keys that differ only in
+  removed characters equal (jsonb keeps the last of duplicate keys).
 
 - `NewJob` payload errors no longer quote the payload, which can be large or
   carry personal data. The errors of `jobqueue.Add` and `AddBundle` still list
