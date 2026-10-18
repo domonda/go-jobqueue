@@ -5,14 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.7.4] - 2026-10-18
+## [v0.8.0] - 2026-10-18
 
-Dependency release: `go-types` moves to its tagged `v1.0.0-beta.2`, `golog` to
-v1.3.0, and building this module now requires Go 1.27.0. Job payload validation
-is unchanged: `NewJob` still rejects an empty payload, which the new `go-types`
-would otherwise have let through.
+`go-types` moves to its tagged `v1.0.0-beta.2`, `golog` to v1.3.0, and building
+this module now requires Go 1.27.0. `NewJob` validates payloads more strictly: it
+now also rejects a JSON `null` payload, a nil pointer payload and invalid
+`json.Marshaler` output, and it keeps rejecting an empty payload, which the new
+`go-types` would otherwise have let through.
 
 ### Changed
+
+- **Breaking:** `NewJob`, `NewJobWithPriority`, `NewJobReflectType` and
+  `NewJobBundle` reject a payload that is JSON `null` ("job payload is JSON
+  null"), with or without surrounding whitespace. That includes `"null"`,
+  `nullable.JSON("null")`, a pointer to a nil `nullable.JSON`, and nil maps and
+  slices, which marshal to `null`. A `null` payload carries no data, so its
+  worker would run on a zero value. `null` nested inside a payload object is
+  still accepted.
+
+- **Breaking:** a nil pointer payload of any type is rejected as a nil payload
+  ("nil job payload: *T") instead of being marshalled, usually to `null`.
+
+- **Breaking:** the output of a payload's own `MarshalJSON` method is validated
+  like every other payload, so empty or invalid output is rejected with "job
+  payload is not valid JSON" instead of being queued.
 
 - Go toolchain **1.26.0 → 1.27.0** (the `go` directive in `go.mod` and
   `tools/go.mod`, and the CI `setup-go` version), so building this module now
@@ -50,6 +66,9 @@ would otherwise have let through.
   release-candidate `yaml/v4` pin described under v0.7.3 is gone.
 
 ### Fixed
+
+- `NewJob` and its variants no longer panic for a nil `*notnull.JSON` payload,
+  whose value-receiver `MarshalJSON` was called through the nil pointer.
 
 - `NewJob`, `NewJobWithPriority`, `NewJobReflectType` and `NewJobBundle` keep
   rejecting an empty or nil payload (`""`, `[]byte{}`, `json.RawMessage(nil)`,
@@ -394,7 +413,7 @@ commit;
 Last release before the worker liveness heartbeat work. See the git history for
 details of `v0.5.4` and earlier releases.
 
-[v0.7.4]: https://github.com/domonda/go-jobqueue/compare/v0.7.3...v0.7.4
+[v0.8.0]: https://github.com/domonda/go-jobqueue/compare/v0.7.3...v0.8.0
 [v0.7.3]: https://github.com/domonda/go-jobqueue/compare/v0.7.2...v0.7.3
 [v0.7.2]: https://github.com/domonda/go-jobqueue/compare/v0.7.1...v0.7.2
 [v0.7.1]: https://github.com/domonda/go-jobqueue/compare/v0.7.0...v0.7.1
