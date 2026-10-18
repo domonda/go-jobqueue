@@ -269,11 +269,6 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		}
 	}
 
-	// Make sure jobs are initialized for bundle
-	for _, job := range jobBundle.Jobs {
-		job.BundleID.Set(jobBundle.ID)
-	}
-
 	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
@@ -289,6 +284,11 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		if err := checkPayload(job, payloads[i]); err != nil {
 			return errs.Errorf("job %s: %w", job.ID, err)
 		}
+	}
+
+	// Make sure jobs are initialized for bundle, now that it is accepted
+	for _, job := range jobBundle.Jobs {
+		job.BundleID.Set(jobBundle.ID)
 	}
 
 	if IgnoreJobBundle(ctx, jobBundle) {

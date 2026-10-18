@@ -117,3 +117,37 @@ func TestAddNilJob(t *testing.T) {
 		assert.True(t, bundle.Jobs[0].BundleID.IsNull(), "a rejected bundle must not modify its jobs")
 	})
 }
+
+// TestAddJobBundleRejectedLeavesJobsUnmodified pins that a bundle rejected for a
+// payload, or because the service is closed, doesn't set its jobs' BundleID:
+// a job pointing at a bundle that was never inserted fails a later Add with a
+// foreign key violation.
+func TestAddJobBundleRejectedLeavesJobsUnmodified(t *testing.T) {
+	newBundle := func() *jobqueue.JobBundle {
+		return &jobqueue.JobBundle{
+			ID:      uu.IDFrom("c2a7c5b4-4b0c-4b3e-9a5a-1f2e3d4c5b6b"),
+			Type:    "bundle-type",
+			Origin:  "origin",
+			NumJobs: 2,
+			Jobs: []*jobqueue.Job{
+				{Type: "job-type", Origin: "origin", Payload: notnull.JSON(`{}`)},
+				{Type: "job-type", Origin: "origin", Payload: notnull.JSON(`{invalid`)},
+			},
+		}
+	}
+
+	t.Run("invalid payload", func(t *testing.T) {
+		var service jobworkerDB
+		bundle := newBundle()
+		require.ErrorIs(t, service.AddJobBundle(t.Context(), bundle), jobqueue.ErrInvalidPayload)
+		assert.True(t, bundle.Jobs[0].BundleID.IsNull())
+	})
+
+	t.Run("closed service", func(t *testing.T) {
+		var service jobworkerDB
+		service.closed.Store(true)
+		bundle := newBundle()
+		require.ErrorIs(t, service.AddJobBundle(t.Context(), bundle), jobqueue.ErrClosed)
+		assert.True(t, bundle.Jobs[0].BundleID.IsNull())
+	})
+}
