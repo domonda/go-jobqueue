@@ -3,11 +3,11 @@ package jobqueue
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"time"
 
+	"github.com/domonda/go-errs"
 	"github.com/domonda/go-sqldb/db"
 	"github.com/domonda/go-types/notnull"
 	"github.com/domonda/go-types/nullable"
@@ -135,62 +135,17 @@ func NewJobWithPriority(
 	startAt nullable.Time,
 	retryCount ...int,
 ) (*Job, error) {
-	if jobType == "" {
-		return nil, errors.New("empty jobType")
-	}
+	// Checked before jobType, which NewJobReflectType and NewJobBundle derive
+	// from the payload, so a nil payload reports itself instead of an empty type.
 	if payload == nil {
-		return nil, errors.New("nil job payload")
+		return nil, errs.New("nil job payload")
 	}
-	// A nil pointer is a nil payload. Checking it before the type switch also
-	// keeps a json.Marshaler with a value receiver, like *notnull.JSON, from
-	// being called through a nil pointer, which panics.
-	if v := reflect.ValueOf(payload); v.Kind() == reflect.Pointer && v.IsNil() {
-		return nil, fmt.Errorf("nil job payload: %T", payload)
+	if jobType == "" {
+		return nil, errs.New("empty jobType")
 	}
-
-	var (
-		payloadJSON notnull.JSON
-		err         error
-	)
-	switch x := payload.(type) {
-	case notnull.JSON:
-		payloadJSON = x
-
-	case nullable.JSON:
-		payloadJSON = notnull.JSON(x)
-
-	case json.RawMessage:
-		payloadJSON = notnull.JSON(x)
-
-	case []byte:
-		payloadJSON = notnull.JSON(x)
-
-	case string:
-		payloadJSON = notnull.JSON(x)
-
-	case json.Marshaler:
-		payloadJSON, err = x.MarshalJSON()
-		if err != nil {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v, error: %w", x, err)
-		}
-
-	default:
-		payloadJSON, err = notnull.MarshalJSON(x)
-		if err != nil {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v, error: %w", x, err)
-		}
-	}
-	// Validate with json.Valid, not notnull.JSON.Valid: the latter reports
-	// empty input as valid because it binds as {}, but an empty payload holds
-	// no JSON text. This also checks the output of a json.Marshaler, because
-	// calling MarshalJSON directly skips the validation json.Marshal does.
-	if !json.Valid(payloadJSON) {
-		return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(payloadJSON))
-	}
-	// A JSON null payload carries no data, so its worker would run on a zero
-	// value just like with an empty payload.
-	if bytes.Equal(bytes.TrimSpace(payloadJSON), []byte("null")) {
-		return nil, errors.New("job payload is JSON null")
+	payloadJSON, err := marshalPayload(payload)
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now()
@@ -210,6 +165,83 @@ func NewJobWithPriority(
 	}
 
 	return job, nil
+}
+
+// marshalPayload returns the JSON text of a non-nil job payload. The JSON
+// types, []byte and string, and pointers to the JSON types, are interpreted as
+// JSON text and validated with ValidatePayload. Everything else is marshalled
+// with encoding/json, which also validates and compacts the output of a
+// payload's own MarshalJSON method.
+//
+// Errors name the payload type but never quote the payload, which can be large
+// or carry personal data, because callers log them.
+func marshalPayload(payload any) (notnull.JSON, error) {
+	// A nil pointer is a nil payload. Checking it first also lets the pointer
+	// cases below dereference without a nil check.
+	if v := reflect.ValueOf(payload); v.Kind() == reflect.Pointer && v.IsNil() {
+		return nil, errs.Errorf("nil job payload: %T", payload)
+	}
+
+	var payloadJSON []byte
+	switch x := payload.(type) {
+	case notnull.JSON:
+		payloadJSON = x
+	case *notnull.JSON:
+		payloadJSON = *x
+	case nullable.JSON:
+		payloadJSON = x
+	case *nullable.JSON:
+		payloadJSON = *x
+	case json.RawMessage:
+		payloadJSON = x
+	case *json.RawMessage:
+		payloadJSON = *x
+	case []byte:
+		payloadJSON = x
+	case string:
+		payloadJSON = []byte(x)
+
+	default:
+		marshalled, err := json.Marshal(x)
+		if err != nil {
+			return nil, errs.Errorf("job payload of type %T can't be marshalled to JSON: %w", payload, err)
+		}
+		// json.Marshal output is valid and compact, so only null is left to check.
+		if bytes.Equal(marshalled, jsonNull) {
+			return nil, errs.Errorf("job payload of type %T marshals to JSON null", payload)
+		}
+		return marshalled, nil
+	}
+
+	if err := ValidatePayload(payloadJSON); err != nil {
+		return nil, err
+	}
+	return payloadJSON, nil
+}
+
+var jsonNull = []byte("null")
+
+// ValidatePayload returns an error if payload is not JSON text a job can
+// carry: an empty payload, invalid JSON or the JSON null value. A worker would
+// run on a zero value for any of them. NewJob and the job queue's write path
+// both apply it, so a hand-built Job is held to the same rules.
+func ValidatePayload(payload []byte) (err error) {
+	// The payload is deliberately not passed as a parameter, which would quote
+	// it in the error.
+	defer errs.WrapWithFuncParams(&err)
+
+	if len(payload) == 0 {
+		return errs.New("empty job payload")
+	}
+	// json.Valid and not notnull.JSON.Valid, which reports empty input as
+	// valid because it binds as {}.
+	if !json.Valid(payload) {
+		return errs.Errorf("job payload is not valid JSON (%d bytes)", len(payload))
+	}
+	if bytes.Equal(bytes.TrimSpace(payload), jsonNull) {
+		return errs.New("job payload is JSON null")
+	}
+	return nil
 }
 
 // NewJob creates a Job but does not add it to the queue.

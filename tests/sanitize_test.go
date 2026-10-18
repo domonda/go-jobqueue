@@ -15,6 +15,7 @@ import (
 	"github.com/domonda/go-types/uu"
 
 	"github.com/domonda/go-jobqueue"
+	"github.com/domonda/go-jobqueue/jobworkerdb"
 )
 
 // rawNul is a raw zero byte, which PostgreSQL stores in neither text nor jsonb.
@@ -203,6 +204,78 @@ func TestAddJobRejectsEntirelyUnstorablePayload(t *testing.T) {
 
 	_, err := jobqueue.GetJob(t.Context(), jobID)
 	assert.Error(t, err, "no row may have been written")
+}
+
+// TestAddRejectsHandBuiltInvalidPayloads verifies that the write path holds a
+// struct-literal Job to NewJob's payload rules. Without that an empty payload
+// would be stored as {} and a JSON null as jsonb null, and a worker would claim
+// the job and run on a zero value.
+func TestAddRejectsHandBuiltInvalidPayloads(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const jobType = "test-add-invalid-payload-type"
+
+	tests := []struct {
+		name    string
+		jobID   string
+		payload notnull.JSON
+		wantErr string
+	}{
+		{"nil payload", "f47ac10b-58cc-4372-a567-e00000000060", nil, "empty job payload"},
+		{"JSON null", "f47ac10b-58cc-4372-a567-e00000000061", notnull.JSON("null"), "job payload is JSON null"},
+		{"JSON null with whitespace", "f47ac10b-58cc-4372-a567-e00000000062", notnull.JSON(" null "), "job payload is JSON null"},
+		{"invalid JSON", "f47ac10b-58cc-4372-a567-e00000000063", notnull.JSON(`{invalid`), "job payload is not valid JSON"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jobID := uu.IDFrom(tt.jobID)
+			job := &jobqueue.Job{ID: jobID, Type: jobType, Origin: "test", Payload: tt.payload}
+			t.Cleanup(func() { _ = jobqueue.DeleteJob(context.Background(), jobID) })
+
+			require.ErrorContains(t, jobqueue.Add(t.Context(), job), tt.wantErr)
+
+			_, err := jobqueue.GetJob(t.Context(), jobID)
+			assert.Error(t, err, "no row may have been written")
+		})
+	}
+
+	t.Run("bundle", func(t *testing.T) {
+		bundleID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000064")
+		jobID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000065")
+		t.Cleanup(func() {
+			bg := context.Background()
+			_ = jobqueue.GetService(bg).DeleteJobBundle(bg, bundleID)
+			_ = jobqueue.DeleteJob(bg, jobID)
+		})
+
+		err := jobqueue.AddBundle(t.Context(), &jobqueue.JobBundle{
+			ID:      bundleID,
+			Type:    "test-add-invalid-payload-bundle-type",
+			Origin:  "test",
+			NumJobs: 1,
+			Jobs:    []*jobqueue.Job{{ID: jobID, Type: jobType, Origin: "test", Payload: notnull.JSON("null")}},
+		})
+		require.ErrorContains(t, err, "job payload is JSON null")
+
+		_, err = jobqueue.GetJobBundle(t.Context(), bundleID)
+		assert.Error(t, err, "the bundle insert must be rolled back with the job")
+	})
+
+	t.Run("synchronous", func(t *testing.T) {
+		// Nothing is stored, but the worker must not run on a null payload
+		// either. No worker is registered for the type, so without the payload
+		// check the error would name the missing worker instead.
+		ctx := jobworkerdb.ContextWithSynchronousJobs(t.Context())
+		job := &jobqueue.Job{
+			ID:      uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000066"),
+			Type:    jobType,
+			Origin:  "test",
+			Payload: notnull.JSON("null"),
+		}
+		require.ErrorContains(t, jobqueue.Add(ctx, job), "job payload is JSON null")
+	})
 }
 
 // TestSetJobErrorSanitizesErrorStrings verifies that a job failure is recorded

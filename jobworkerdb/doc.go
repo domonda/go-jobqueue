@@ -103,7 +103,9 @@ Three cases are not silently repaired, and fail the write instead. An origin
 consisting entirely of unstorable characters sanitizes to empty and violates the
 column's non-empty constraint. A payload with nothing storable left is rejected
 rather than stored as an empty object, which would otherwise be dispatched to a
-worker as an all-zero payload. And an error message that sanitizes to empty is
+worker as an all-zero payload; so is a sanitized payload that
+[jobqueue.ValidatePayload] rejects (empty, invalid JSON or JSON null), which holds
+a hand-built Job to the payload rules NewJob applies. And an error message that sanitizes to empty is
 replaced by a placeholder rather than stored empty, because an empty error_msg
 reads back as SQL NULL through nullable.NonEmptyString and would make a failed job
 look successful.

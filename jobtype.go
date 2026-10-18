@@ -8,6 +8,7 @@ import (
 // The job type string starts with the package import path of the type
 // followed by a point and the type name.
 // Pointer types will be dereferenced.
+// A nil payload returns an empty string.
 func ReflectJobTypeOfPayload(payload any) string {
 	return JobTypeOfPayloadType(reflect.TypeOf(payload))
 }
@@ -16,7 +17,11 @@ func ReflectJobTypeOfPayload(payload any) string {
 // The job type string starts with the package import path of the type
 // followed by a point and the type name.
 // Pointer types will be dereferenced.
+// A nil payloadType returns an empty string.
 func JobTypeOfPayloadType(payloadType reflect.Type) string {
+	if payloadType == nil {
+		return ""
+	}
 	for payloadType.Kind() == reflect.Pointer {
 		payloadType = payloadType.Elem()
 	}

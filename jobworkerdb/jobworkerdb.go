@@ -138,8 +138,9 @@ func (*jobworkerDB) unlisten(ctx context.Context) (err error) {
 //
 // Both outcomes specific to this statement fail the insert: an origin whose
 // every character is unstorable sanitizes to "" and fails
-// check(length(origin) > 0), and a payload with nothing storable left is
-// rejected before the statement runs (see the guard below).
+// check(length(origin) > 0), and a sanitized payload that jobqueue.ValidatePayload
+// rejects (nothing storable left, empty, invalid JSON or JSON null) fails before
+// the statement runs.
 func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, job)
 
@@ -153,6 +154,12 @@ func insertJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	// already do — the caller passed data this queue cannot carry.
 	if len(job.Payload) > 0 && len(payload) == 0 {
 		return errs.New("job payload contained no characters PostgreSQL can store")
+	}
+	// A hand-built Job bypasses NewJob's payload rules, so apply them here too.
+	// Validated after sanitizing because raw bytes the sanitizer removes, like a
+	// zero byte inside a string, make otherwise storable JSON fail json.Valid.
+	if err := jobqueue.ValidatePayload(payload); err != nil {
+		return err
 	}
 
 	return db.Exec(ctx,
@@ -207,6 +214,11 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 		log.Debug("Synchronous job").
 			UUID("jobID", job.ID).
 			Log()
+		// Same payload rules as the insert path, without its sanitizing
+		// because nothing is stored.
+		if err := jobqueue.ValidatePayload(job.Payload); err != nil {
+			return err
+		}
 		return jobworker.DoJob(ctx, job)
 	}
 
@@ -236,6 +248,13 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		log.Debug("Synchronous job-bundle").
 			UUID("jobBundleID", jobBundle.ID).
 			Log()
+		// Validate every payload before running any job, like the insert path
+		// does inside its transaction.
+		for _, job := range jobBundle.Jobs {
+			if err := jobqueue.ValidatePayload(job.Payload); err != nil {
+				return err
+			}
+		}
 		for _, job := range jobBundle.Jobs {
 			err = jobworker.DoJob(ctx, job)
 			if err != nil {

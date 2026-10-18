@@ -16,8 +16,9 @@ import (
 	"github.com/domonda/go-jobqueue"
 )
 
-// marshalerOK / marshalerErr exercise the json.Marshaler case of the payload
-// type switch (a custom type that is none of the concrete byte/string cases).
+// marshalerOK / marshalerErr exercise payloads with their own MarshalJSON
+// method (a custom type that is none of the concrete byte/string cases), which
+// NewJob marshals with encoding/json.
 type marshalerOK struct{}
 
 func (marshalerOK) MarshalJSON() ([]byte, error) { return []byte(`{"ok":true}`), nil }
@@ -26,8 +27,8 @@ type marshalerErr struct{}
 
 func (marshalerErr) MarshalJSON() ([]byte, error) { return nil, errors.New("marshal boom") }
 
-// marshalerEmpty / marshalerInvalid return output that is not JSON text
-// without an error, which NewJob must still reject.
+// marshalerEmpty / marshalerInvalid / marshalerNull return output without an
+// error that NewJob must still reject: no JSON text, invalid JSON and null.
 type marshalerEmpty struct{}
 
 func (marshalerEmpty) MarshalJSON() ([]byte, error) { return []byte{}, nil }
@@ -35,6 +36,10 @@ func (marshalerEmpty) MarshalJSON() ([]byte, error) { return []byte{}, nil }
 type marshalerInvalid struct{}
 
 func (marshalerInvalid) MarshalJSON() ([]byte, error) { return []byte(`{invalid`), nil }
+
+type marshalerNull struct{}
+
+func (marshalerNull) MarshalJSON() ([]byte, error) { return []byte(" null "), nil }
 
 // structPayload exercises the default (reflection-marshalled) case.
 type structPayload struct {
@@ -61,6 +66,8 @@ func TestNewJobWithPriority_ValidPayloads(t *testing.T) {
 		{"default reflect-marshal int", 42, `42`},
 		{"pointer to struct", &structPayload{Name: "x"}, `{"Name":"x"}`},
 		{"pointer to notnull.JSON", new(notnull.JSON(`{"a":1}`)), `{"a":1}`},
+		{"pointer to nullable.JSON", new(nullable.JSON(`{"a":1}`)), `{"a":1}`},
+		{"pointer to json.RawMessage", new(json.RawMessage(`{"a":1}`)), `{"a":1}`},
 		{"null nested in an object", `{"a":null}`, `{"a":null}`},
 	}
 	for _, tt := range tests {
@@ -74,52 +81,75 @@ func TestNewJobWithPriority_ValidPayloads(t *testing.T) {
 }
 
 func TestNewJobWithPriority_InvalidPayloads(t *testing.T) {
+	const (
+		invalidJSON    = "job payload is not valid JSON"
+		emptyPayload   = "empty job payload"
+		nullPayload    = "job payload is JSON null"
+		cantMarshal    = "can't be marshalled to JSON"
+		marshalsToNull = "marshals to JSON null"
+	)
 	id := uu.IDFrom(testJobID)
 	tests := []struct {
 		name    string
 		payload any
+		wantErr string // pins which rejection fired
 	}{
-		{"invalid notnull.JSON", notnull.JSON(`{invalid`)},
-		{"invalid nullable.JSON", nullable.JSON(`{invalid`)},
-		{"invalid json.RawMessage", json.RawMessage(`{invalid`)},
-		{"invalid byte slice", []byte(`{invalid`)},
-		{"invalid string", `{invalid`},
+		{"invalid notnull.JSON", notnull.JSON(`{invalid`), invalidJSON},
+		{"invalid nullable.JSON", nullable.JSON(`{invalid`), invalidJSON},
+		{"invalid json.RawMessage", json.RawMessage(`{invalid`), invalidJSON},
+		{"invalid byte slice", []byte(`{invalid`), invalidJSON},
+		{"invalid string", `{invalid`, invalidJSON},
 		// Empty input holds no JSON text. go-types v1.0.0-beta.2 made
 		// notnull.JSON.Valid report it as valid (it binds as {}), so these
 		// rows pin that NewJob still rejects it instead of queuing a job
 		// whose worker would run on an all-zero payload.
-		{"empty notnull.JSON", notnull.JSON("")},
-		{"nil notnull.JSON", notnull.JSON(nil)},
-		{"nil nullable.JSON", nullable.JSON(nil)},
-		{"nil json.RawMessage", json.RawMessage(nil)},
-		{"empty byte slice", []byte{}},
-		{"empty string", ""},
-		{"json.Marshaler returning error", marshalerErr{}},
-		{"json.Marshaler returning empty output", marshalerEmpty{}},
-		{"json.Marshaler returning invalid JSON", marshalerInvalid{}},
-		{"default unmarshalable value", make(chan int)},
+		{"empty notnull.JSON", notnull.JSON(""), emptyPayload},
+		{"nil notnull.JSON", notnull.JSON(nil), emptyPayload},
+		{"nil nullable.JSON", nullable.JSON(nil), emptyPayload},
+		{"nil json.RawMessage", json.RawMessage(nil), emptyPayload},
+		{"empty byte slice", []byte{}, emptyPayload},
+		{"empty string", "", emptyPayload},
+		// A pointer to a JSON type is dereferenced instead of marshalled:
+		// notnull.JSON.MarshalJSON would turn the empty value into {}.
+		{"pointer to empty notnull.JSON", new(notnull.JSON), emptyPayload},
+		{"pointer to nil nullable.JSON", new(nullable.JSON), emptyPayload},
+		{"pointer to nil json.RawMessage", new(json.RawMessage), emptyPayload},
+		{"json.Marshaler returning error", marshalerErr{}, cantMarshal},
+		{"json.Marshaler returning empty output", marshalerEmpty{}, cantMarshal},
+		{"json.Marshaler returning invalid JSON", marshalerInvalid{}, cantMarshal},
+		{"json.Marshaler returning null", marshalerNull{}, marshalsToNull},
+		{"default unmarshalable value", make(chan int), cantMarshal},
 		// A nil pointer is a nil payload, even when its type has a value
 		// receiver MarshalJSON that would panic when called through it.
-		{"nil *notnull.JSON", (*notnull.JSON)(nil)},
-		{"nil *nullable.JSON", (*nullable.JSON)(nil)},
-		{"nil struct pointer", (*structPayload)(nil)},
+		{"nil *notnull.JSON", (*notnull.JSON)(nil), "nil job payload: *notnull.JSON"},
+		{"nil *nullable.JSON", (*nullable.JSON)(nil), "nil job payload: *nullable.JSON"},
+		{"nil struct pointer", (*structPayload)(nil), "nil job payload: *jobqueue_test.structPayload"},
 		// A JSON null payload carries no data for the worker, which would
 		// run on a zero value just like with an empty payload.
-		{"null string", "null"},
-		{"null with surrounding whitespace", " null\n"},
-		{"null notnull.JSON", notnull.JSON("null")},
-		{"null nullable.JSON", nullable.JSON("null")},
-		{"pointer to nil nullable.JSON", new(nullable.JSON)},
-		{"nil map", map[string]int(nil)},
-		{"nil slice", []int(nil)},
+		{"null string", "null", nullPayload},
+		{"null with surrounding whitespace", " null\n", nullPayload},
+		{"null notnull.JSON", notnull.JSON("null"), nullPayload},
+		{"null nullable.JSON", nullable.JSON("null"), nullPayload},
+		{"pointer to null nullable.JSON", new(nullable.JSON("null")), nullPayload},
+		{"nil map", map[string]int(nil), marshalsToNull},
+		{"nil slice", []int(nil), marshalsToNull},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			job, err := jobqueue.NewJobWithPriority(id, "jobType", "origin", tt.payload, 0, nullable.Time{})
-			require.Error(t, err)
+			require.ErrorContains(t, err, tt.wantErr)
 			assert.Nil(t, job)
 		})
 	}
+}
+
+// TestNewJobWithPriority_ErrorsOmitPayload pins that a rejected payload is not
+// quoted in the error, which callers log: it can be large or carry personal data.
+func TestNewJobWithPriority_ErrorsOmitPayload(t *testing.T) {
+	const secret = "jane.doe@example.com"
+	_, err := jobqueue.NewJobWithPriority(uu.IDFrom(testJobID), "jobType", "origin", `{"email":"`+secret, 0, nullable.Time{})
+	require.ErrorContains(t, err, "job payload is not valid JSON")
+	assert.NotContains(t, err.Error(), secret)
 }
 
 func TestNewJobWithPriority_ArgErrors(t *testing.T) {
@@ -133,7 +163,13 @@ func TestNewJobWithPriority_ArgErrors(t *testing.T) {
 
 	t.Run("nil payload", func(t *testing.T) {
 		job, err := jobqueue.NewJobWithPriority(id, "jobType", "origin", nil, 0, nullable.Time{})
-		require.Error(t, err)
+		require.ErrorContains(t, err, "nil job payload")
+		assert.Nil(t, job)
+	})
+
+	t.Run("nil payload is reported before an empty jobType", func(t *testing.T) {
+		job, err := jobqueue.NewJobWithPriority(id, "", "origin", nil, 0, nullable.Time{})
+		require.ErrorContains(t, err, "nil job payload")
 		assert.Nil(t, job)
 	})
 }
@@ -180,4 +216,12 @@ func TestNewJobReflectType(t *testing.T) {
 	assert.Equal(t, jobqueue.ReflectJobTypeOfPayload(payload), job.Type,
 		"job type is derived from the payload type via reflection")
 	assert.JSONEq(t, `{"Name":"x"}`, string(job.Payload))
+}
+
+func TestNewJobReflectType_NilPayload(t *testing.T) {
+	// The job type is derived from the payload type, which a nil payload
+	// lacks: it must be reported as an error, not panic.
+	job, err := jobqueue.NewJobReflectType(uu.IDFrom(testJobID), "origin", nil, nullable.Time{})
+	require.ErrorContains(t, err, "nil job payload")
+	assert.Nil(t, job)
 }
