@@ -353,6 +353,11 @@ ctx = jobworkerdb.ContextWithSynchronousJobs(ctx)
 jobqueue.Add(ctx, job)
 ```
 
+Payloads are checked first, as for a stored job: `jobqueue.Add` and `AddBundle` return an
+error matching `jobqueue.ErrInvalidPayload` for a payload the queue would refuse to store, and
+the worker gets the sanitized payload that would be stored. The ignore contexts below apply the
+same check, so a rejected payload fails instead of being discarded.
+
 ### Ignoring Jobs for Testing
 
 Ignore all jobs:
@@ -461,6 +466,7 @@ existing instance, or set different credentials).
 
 ## Dependencies
 
+- Go 1.27.0+
 - PostgreSQL 17+
 - [github.com/domonda/go-sqldb](https://github.com/domonda/go-sqldb) - SQL database utilities
 - [github.com/domonda/go-types](https://github.com/domonda/go-types) - Type system extensions

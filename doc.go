@@ -126,8 +126,9 @@ GetService.
 # Testing
 
 For testing, jobs can be executed synchronously without database persistence using
-jobworkerdb.ContextWithSynchronousJobs, or ignored entirely using
-jobworkerdb.ContextWithIgnoreJob.
+jobworkerdb.ContextWithSynchronousJobs, or ignored using
+jobworkerdb.ContextWithIgnoreJob. In both, a payload the queue would refuse to
+store still fails with an error matching ErrInvalidPayload.
 
 # Error Handling
 

@@ -49,6 +49,8 @@ Schema files in `schema/`: `worker.sql` orchestrates `worker/job.sql`, `worker/j
 - `jobworkerdb.ContextWithIgnoreJobType(ctx, jobType)` — discards specific job types
 - `jobworkerdb.ContextWithIgnoreJobBundle(ctx, ...)` — discards bundles
 
+`AddJob`/`AddJobBundle` check every payload before these modes apply: a payload the queue would refuse to store (the `jobqueue.ValidatePayload` rules) returns an error matching `jobqueue.ErrInvalidPayload` instead of being discarded or run, and a synchronous run gets the sanitized payload that would be stored (see String Sanitization in `jobworkerdb/doc.go`).
+
 ### Job bundle counter invariant
 
 Bundle completion tracking uses `num_jobs_stopped` counter. `SetJobResult`/`SetJobError` use `FOR UPDATE` (blocking, not `SKIP LOCKED`) on the bundle row because every completion must increment. `ResetJob` decrements the counter for already-counted jobs. This differs from `StartNextJobOrNil` which uses `FOR UPDATE SKIP LOCKED` since workers compete for any unclaimed job.
