@@ -259,7 +259,8 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobBundle) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobBundle)
 
-	// Checked before the jobs are modified, so a rejected bundle is left as passed.
+	// Checked before the jobs are modified, so a bundle rejected here, by the
+	// closed check or by the payload check is left as passed.
 	if jobBundle == nil {
 		return errs.New("nil job bundle")
 	}
@@ -286,7 +287,8 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		}
 	}
 
-	// Make sure jobs are initialized for bundle, now that it is accepted
+	// Make sure jobs are initialized for bundle, now that the Go-side checks
+	// passed. A database error further down still leaves the jobs stamped.
 	for _, job := range jobBundle.Jobs {
 		job.BundleID.Set(jobBundle.ID)
 	}

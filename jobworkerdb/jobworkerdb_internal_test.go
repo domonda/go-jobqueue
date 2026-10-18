@@ -1,6 +1,7 @@
 package jobworkerdb
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/domonda/go-types/uu"
 
 	"github.com/domonda/go-jobqueue"
+	"github.com/domonda/go-jobqueue/jobworker"
 )
 
 // TestBuildClaimJobQuery verifies the StartNextJobOrNil claim query is assembled
@@ -149,5 +151,46 @@ func TestAddJobBundleRejectedLeavesJobsUnmodified(t *testing.T) {
 		bundle := newBundle()
 		require.ErrorIs(t, service.AddJobBundle(t.Context(), bundle), jobqueue.ErrClosed)
 		assert.True(t, bundle.Jobs[0].BundleID.IsNull())
+	})
+}
+
+// TestAddJobBundleStampsBundleIDBeforeIgnoreAndSync pins that ignore callbacks
+// and synchronous workers see the bundle's ID on its jobs, as they did before
+// the stamping moved behind the payload check.
+func TestAddJobBundleStampsBundleIDBeforeIgnoreAndSync(t *testing.T) {
+	bundleID := uu.IDFrom("c2a7c5b4-4b0c-4b3e-9a5a-1f2e3d4c5b6e")
+	newBundle := func(jobType string) *jobqueue.JobBundle {
+		return &jobqueue.JobBundle{
+			ID:      bundleID,
+			Type:    "bundle-type",
+			Origin:  "origin",
+			NumJobs: 1,
+			Jobs:    []*jobqueue.Job{{ID: uu.IDFrom("c2a7c5b4-4b0c-4b3e-9a5a-1f2e3d4c5b6f"), Type: jobType, Origin: "origin", Payload: notnull.JSON(`{}`)}},
+		}
+	}
+
+	t.Run("ignore callback", func(t *testing.T) {
+		var service jobworkerDB
+		var seen uu.NullableID
+		ctx := ContextWithIgnoreJobBundle(t.Context(), func(b *jobqueue.JobBundle) bool {
+			seen = b.Jobs[0].BundleID
+			return true
+		})
+		require.NoError(t, service.AddJobBundle(ctx, newBundle("job-type")))
+		assert.Equal(t, bundleID.Nullable(), seen)
+	})
+
+	t.Run("synchronous worker", func(t *testing.T) {
+		const jobType = "test-bundle-id-sync-type"
+		var seen uu.NullableID
+		jobworker.Register(jobType, func(_ context.Context, job *jobqueue.Job) (any, error) {
+			seen = job.BundleID
+			return nil, nil
+		})
+		t.Cleanup(func() { jobworker.Unregister(jobType) })
+
+		var service jobworkerDB
+		require.NoError(t, service.AddJobBundle(ContextWithSynchronousJobs(t.Context()), newBundle(jobType)))
+		assert.Equal(t, bundleID.Nullable(), seen)
 	})
 }
