@@ -9,34 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `go-types` moves to its tagged `v1.0.0-beta.2`, `golog` to v1.3.0, and building
 this module now requires Go 1.27.0. Job payloads are validated more strictly and
-in one place: `NewJob` and the queue's write path now reject an empty, invalid or
-JSON `null` payload and a nil pointer payload, including for hand-built `Job`
-values, so no worker runs on a zero-value payload.
+in one place: `NewJob` and `jobqueue.Add`/`AddBundle` with the PostgreSQL service
+now reject an empty, invalid or JSON `null` payload and a nil pointer payload,
+including for hand-built `Job` values, with an error wrapping the new
+`jobqueue.ErrInvalidPayload`.
 
 ### Added
 
+- `jobqueue.ErrInvalidPayload`, wrapped by every payload rejection; test for it
+  with `errors.Is`. A rejected payload is rejected again, so don't retry it
+  unchanged.
+
 - `jobqueue.ValidatePayload(payload []byte) error`, the payload rules `NewJob`
-  and the queue apply: it rejects an empty payload ("empty job payload"),
-  invalid JSON ("job payload is not valid JSON") and the JSON `null` value ("job
-  payload is JSON null").
+  and the queue apply: it rejects an empty payload ("invalid job payload:
+  empty"), invalid JSON ("invalid job payload: not valid JSON (N bytes)") and the
+  JSON `null` value ("invalid job payload: JSON null").
 
 ### Changed
 
 - **Breaking:** `NewJob`, `NewJobWithPriority`, `NewJobReflectType` and
   `NewJobBundle` reject a payload that is JSON `null`, with or without
   surrounding whitespace. That includes `"null"`, `nullable.JSON("null")`, and
-  nil maps and slices or a `MarshalJSON` method that marshal to `null` ("job
-  payload of type T marshals to JSON null"). A `null` payload carries no data, so
+  nil maps and slices or a `MarshalJSON` method that marshal to `null` ("invalid
+  job payload: T marshals to JSON null"). A `null` payload carries no data, so
   its worker would run on a zero value. `null` nested inside a payload object is
   still accepted.
 
-- **Breaking:** a nil pointer payload of any type is rejected as a nil payload
-  ("nil job payload: *T") instead of being marshalled, usually to `null`.
+- **Breaking:** a nil pointer payload of any type is rejected ("invalid job
+  payload: nil *T") instead of being marshalled, usually to `null`. An untyped
+  nil payload reports "invalid job payload: nil".
 
 - **Breaking:** a payload with its own `MarshalJSON` method is marshalled with
   `encoding/json`, which validates the method's output and compacts it, escaping
   `<`, `>` and `&` like in any other marshalled payload. Empty or invalid output
-  is rejected ("job payload of type T can't be marshalled to JSON") instead of
+  is rejected ("invalid job payload: T can't be marshalled to JSON") instead of
   being queued. The JSON value of valid output is unchanged.
 
 - **Breaking:** a pointer to `notnull.JSON`, `nullable.JSON` or
@@ -45,14 +51,29 @@ values, so no worker runs on a zero-value payload.
   queued as `{}` and is now rejected as an empty payload.
 
 - **Breaking:** `jobqueue.Add` and `jobqueue.AddBundle` with the PostgreSQL
-  service apply `ValidatePayload` to every job, so a hand-built `Job` with an
-  empty, invalid or `null` payload fails instead of being stored as `{}` or jsonb
-  `null` (or, in a `ContextWithSynchronousJobs` context, run). The payload is
-  validated after sanitizing, so a payload that sanitizing repairs still works. A
-  bundle is validated as a whole: one rejected job fails the bundle.
+  service check every job's payload, after sanitizing, with `ValidatePayload`, so
+  a hand-built `Job` with an empty, invalid or `null` payload fails instead of
+  being stored as `{}` or jsonb `null`. A payload that sanitizing repairs still
+  works. The check runs before a job is ignored (`ContextWithIgnoreJob`,
+  `ContextWithIgnoreJobType`, `ContextWithIgnoreJobBundle`), run in a
+  `ContextWithSynchronousJobs` context or stored, so all three modes accept the
+  same payloads and tests that stub enqueueing see the same rejections. A bundle
+  is checked as a whole before its first row is inserted: one rejected job fails
+  the bundle, also inside a caller's outer transaction. A payload with nothing
+  storable left reports "invalid job payload: no characters PostgreSQL can
+  store".
 
-- Payload errors name the payload type but no longer quote the payload, which
-  can be large or carry personal data.
+- `NewJob` payload errors no longer quote the payload, which can be large or
+  carry personal data. The errors of `jobqueue.Add` and `AddBundle` still list
+  the job or bundle in their call context, payload included, as before.
+
+- `NewJobBundle` errors name the rejected description, as in
+  `jobDescriptions[2] of type "my-job": invalid job payload: JSON null`.
+
+- The rules apply to jobs added by this release. Jobs queued by an earlier
+  release or written by other producers can still carry a `null` payload. To
+  find unfinished ones before upgrading workers:
+  `select id, type from worker.job where jsonb_typeof(payload) = 'null' and stopped_at is null`.
 
 - Go toolchain **1.26.0 → 1.27.0** (the `go` directive in `go.mod` and
   `tools/go.mod`), so building this module now requires Go 1.27.0 or newer. CI
@@ -98,15 +119,15 @@ values, so no worker runs on a zero-value payload.
 
 - `NewJobReflectType` and `NewJobBundle` (for a `JobDesc` without a `Type`) no
   longer panic for a nil payload while deriving the job type, and return the
-  "nil job payload" error. `ReflectJobTypeOfPayload(nil)` and
+  "invalid job payload: nil" error. `ReflectJobTypeOfPayload(nil)` and
   `JobTypeOfPayloadType(nil)` return an empty string.
 
 - `NewJob`, `NewJobWithPriority`, `NewJobReflectType` and `NewJobBundle` keep
   rejecting an empty or nil payload (`""`, `[]byte{}`, `json.RawMessage(nil)`,
-  an empty or nil `notnull.JSON`, `nullable.JSON(nil)`), now with "empty job
-  payload". `go-types` v1.0.0-beta.2 made `notnull.JSON.Valid` report empty input
-  as valid, which would have queued such a job as `{}` and run its worker on a
-  zero-value payload.
+  an empty or nil `notnull.JSON`, `nullable.JSON(nil)`), now with "invalid job
+  payload: empty". `go-types` v1.0.0-beta.2 made `notnull.JSON.Valid` report
+  empty input as valid, which would have queued such a job as `{}` and run its
+  worker on a zero-value payload.
 
 ## [0.7.3] - 2026-09-03
 
