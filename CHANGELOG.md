@@ -82,8 +82,8 @@ including for hand-built `Job` values, with an error matching the new
 
 - `NewJob` now returns a nil job with its error for payloads it used to accept
   (nil maps, slices and pointers, `null`). Code that discards the error, as in
-  `job, _ := jobqueue.NewJob(...)`, and passes the nil job to `jobqueue.Add`
-  panics: check the error.
+  `job, _ := jobqueue.NewJob(...)`, now gets "nil job" from `jobqueue.Add`
+  instead of a queued job: check the error of `NewJob`.
 
 - The rules apply to jobs added by this release. Jobs queued by an earlier
   release or written by other producers can still carry a `null` payload. To
@@ -131,6 +131,10 @@ including for hand-built `Job` values, with an error matching the new
 
 - `NewJob` and its variants no longer panic for a nil `*notnull.JSON` payload,
   whose value-receiver `MarshalJSON` was called through the nil pointer.
+
+- `jobqueue.Add` and `jobqueue.AddBundle` with the PostgreSQL service return an
+  error instead of panicking for a nil job, a nil bundle or a nil job in a
+  bundle. A rejected bundle's jobs are left unmodified.
 
 - `NewJobReflectType` and `NewJobBundle` (for a `JobDesc` without a `Type`) no
   longer panic for a nil payload while deriving the job type, and return the
