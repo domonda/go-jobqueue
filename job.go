@@ -1,9 +1,11 @@
 package jobqueue
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/domonda/go-sqldb/db"
@@ -121,6 +123,8 @@ func (j *Job) String() string {
 
 // NewJobWithPriority creates a Job but does not add it to the queue.
 // The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
+// It must result in JSON text other than null: a nil payload or nil pointer,
+// empty or invalid JSON and a JSON null value are rejected with an error.
 // If startAt is not null then the job will not start before that time.
 func NewJobWithPriority(
 	id uu.ID,
@@ -137,44 +141,32 @@ func NewJobWithPriority(
 	if payload == nil {
 		return nil, errors.New("nil job payload")
 	}
+	// A nil pointer is a nil payload. Checking it before the type switch also
+	// keeps a json.Marshaler with a value receiver, like *notnull.JSON, from
+	// being called through a nil pointer, which panics.
+	if v := reflect.ValueOf(payload); v.Kind() == reflect.Pointer && v.IsNil() {
+		return nil, fmt.Errorf("nil job payload: %T", payload)
+	}
 
 	var (
 		payloadJSON notnull.JSON
 		err         error
 	)
-	// Validate with json.Valid, not notnull.JSON.Valid: the latter reports
-	// empty input as valid because it binds as {}, but an empty payload holds
-	// no JSON text and must be rejected.
 	switch x := payload.(type) {
 	case notnull.JSON:
 		payloadJSON = x
-		if !json.Valid(payloadJSON) {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
-		}
 
 	case nullable.JSON:
 		payloadJSON = notnull.JSON(x)
-		if !json.Valid(payloadJSON) {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
-		}
 
 	case json.RawMessage:
 		payloadJSON = notnull.JSON(x)
-		if !json.Valid(payloadJSON) {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
-		}
 
 	case []byte:
 		payloadJSON = notnull.JSON(x)
-		if !json.Valid(payloadJSON) {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
-		}
 
 	case string:
 		payloadJSON = notnull.JSON(x)
-		if !json.Valid(payloadJSON) {
-			return nil, fmt.Errorf("job payload is not valid JSON: %#v", x)
-		}
 
 	case json.Marshaler:
 		payloadJSON, err = x.MarshalJSON()
@@ -187,6 +179,18 @@ func NewJobWithPriority(
 		if err != nil {
 			return nil, fmt.Errorf("job payload is not valid JSON: %#v, error: %w", x, err)
 		}
+	}
+	// Validate with json.Valid, not notnull.JSON.Valid: the latter reports
+	// empty input as valid because it binds as {}, but an empty payload holds
+	// no JSON text. This also checks the output of a json.Marshaler, because
+	// calling MarshalJSON directly skips the validation json.Marshal does.
+	if !json.Valid(payloadJSON) {
+		return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(payloadJSON))
+	}
+	// A JSON null payload carries no data, so its worker would run on a zero
+	// value just like with an empty payload.
+	if bytes.Equal(bytes.TrimSpace(payloadJSON), []byte("null")) {
+		return nil, errors.New("job payload is JSON null")
 	}
 
 	now := time.Now()
@@ -209,7 +213,8 @@ func NewJobWithPriority(
 }
 
 // NewJob creates a Job but does not add it to the queue.
-// The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
+// The passed payload will be marshalled to JSON or directly interpreted as JSON if possible,
+// and is rejected like for NewJobWithPriority if it is nil, empty, invalid or JSON null.
 // If startAt is not null then the job will not start before that time.
 func NewJob(
 	id uu.ID,
@@ -223,7 +228,8 @@ func NewJob(
 }
 
 // NewJobReflectType creates a Job but does not add it to the queue.
-// The passed payload will be marshalled to JSON or directly interpreted as JSON if possible.
+// The passed payload will be marshalled to JSON or directly interpreted as JSON if possible,
+// and is rejected like for NewJobWithPriority if it is nil, empty, invalid or JSON null.
 // If startAt is not null then the job will not start before that time.
 //
 // ReflectJobTypeOfPayload(payload) is used to

@@ -26,6 +26,16 @@ type marshalerErr struct{}
 
 func (marshalerErr) MarshalJSON() ([]byte, error) { return nil, errors.New("marshal boom") }
 
+// marshalerEmpty / marshalerInvalid return output that is not JSON text
+// without an error, which NewJob must still reject.
+type marshalerEmpty struct{}
+
+func (marshalerEmpty) MarshalJSON() ([]byte, error) { return []byte{}, nil }
+
+type marshalerInvalid struct{}
+
+func (marshalerInvalid) MarshalJSON() ([]byte, error) { return []byte(`{invalid`), nil }
+
 // structPayload exercises the default (reflection-marshalled) case.
 type structPayload struct {
 	Name string
@@ -49,6 +59,9 @@ func TestNewJobWithPriority_ValidPayloads(t *testing.T) {
 		{"default reflect-marshal struct", structPayload{Name: "x"}, `{"Name":"x"}`},
 		{"default reflect-marshal map", map[string]int{"a": 1}, `{"a":1}`},
 		{"default reflect-marshal int", 42, `42`},
+		{"pointer to struct", &structPayload{Name: "x"}, `{"Name":"x"}`},
+		{"pointer to notnull.JSON", new(notnull.JSON(`{"a":1}`)), `{"a":1}`},
+		{"null nested in an object", `{"a":null}`, `{"a":null}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -82,7 +95,23 @@ func TestNewJobWithPriority_InvalidPayloads(t *testing.T) {
 		{"empty byte slice", []byte{}},
 		{"empty string", ""},
 		{"json.Marshaler returning error", marshalerErr{}},
+		{"json.Marshaler returning empty output", marshalerEmpty{}},
+		{"json.Marshaler returning invalid JSON", marshalerInvalid{}},
 		{"default unmarshalable value", make(chan int)},
+		// A nil pointer is a nil payload, even when its type has a value
+		// receiver MarshalJSON that would panic when called through it.
+		{"nil *notnull.JSON", (*notnull.JSON)(nil)},
+		{"nil *nullable.JSON", (*nullable.JSON)(nil)},
+		{"nil struct pointer", (*structPayload)(nil)},
+		// A JSON null payload carries no data for the worker, which would
+		// run on a zero value just like with an empty payload.
+		{"null string", "null"},
+		{"null with surrounding whitespace", " null\n"},
+		{"null notnull.JSON", notnull.JSON("null")},
+		{"null nullable.JSON", nullable.JSON("null")},
+		{"pointer to nil nullable.JSON", new(nullable.JSON)},
+		{"nil map", map[string]int(nil)},
+		{"nil slice", []int(nil)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
