@@ -5,38 +5,63 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.8.0] - 2026-10-18
+## [0.8.0] - 2026-10-18
 
 `go-types` moves to its tagged `v1.0.0-beta.2`, `golog` to v1.3.0, and building
-this module now requires Go 1.27.0. `NewJob` validates payloads more strictly: it
-now also rejects a JSON `null` payload, a nil pointer payload and invalid
-`json.Marshaler` output, and it keeps rejecting an empty payload, which the new
-`go-types` would otherwise have let through.
+this module now requires Go 1.27.0. Job payloads are validated more strictly and
+in one place: `NewJob` and the queue's write path now reject an empty, invalid or
+JSON `null` payload and a nil pointer payload, including for hand-built `Job`
+values, so no worker runs on a zero-value payload.
+
+### Added
+
+- `jobqueue.ValidatePayload(payload []byte) error`, the payload rules `NewJob`
+  and the queue apply: it rejects an empty payload ("empty job payload"),
+  invalid JSON ("job payload is not valid JSON") and the JSON `null` value ("job
+  payload is JSON null").
 
 ### Changed
 
 - **Breaking:** `NewJob`, `NewJobWithPriority`, `NewJobReflectType` and
-  `NewJobBundle` reject a payload that is JSON `null` ("job payload is JSON
-  null"), with or without surrounding whitespace. That includes `"null"`,
-  `nullable.JSON("null")`, a pointer to a nil `nullable.JSON`, and nil maps and
-  slices, which marshal to `null`. A `null` payload carries no data, so its
-  worker would run on a zero value. `null` nested inside a payload object is
+  `NewJobBundle` reject a payload that is JSON `null`, with or without
+  surrounding whitespace. That includes `"null"`, `nullable.JSON("null")`, and
+  nil maps and slices or a `MarshalJSON` method that marshal to `null` ("job
+  payload of type T marshals to JSON null"). A `null` payload carries no data, so
+  its worker would run on a zero value. `null` nested inside a payload object is
   still accepted.
 
 - **Breaking:** a nil pointer payload of any type is rejected as a nil payload
   ("nil job payload: *T") instead of being marshalled, usually to `null`.
 
-- **Breaking:** the output of a payload's own `MarshalJSON` method is validated
-  like every other payload, so empty or invalid output is rejected with "job
-  payload is not valid JSON" instead of being queued.
+- **Breaking:** a payload with its own `MarshalJSON` method is marshalled with
+  `encoding/json`, which validates the method's output and compacts it, escaping
+  `<`, `>` and `&` like in any other marshalled payload. Empty or invalid output
+  is rejected ("job payload of type T can't be marshalled to JSON") instead of
+  being queued. The JSON value of valid output is unchanged.
+
+- **Breaking:** a pointer to `notnull.JSON`, `nullable.JSON` or
+  `json.RawMessage` is dereferenced and its JSON text validated like the value,
+  instead of being marshalled. A pointer to an empty `notnull.JSON` used to be
+  queued as `{}` and is now rejected as an empty payload.
+
+- **Breaking:** `jobqueue.Add` and `jobqueue.AddBundle` with the PostgreSQL
+  service apply `ValidatePayload` to every job, so a hand-built `Job` with an
+  empty, invalid or `null` payload fails instead of being stored as `{}` or jsonb
+  `null` (or, in a `ContextWithSynchronousJobs` context, run). The payload is
+  validated after sanitizing, so a payload that sanitizing repairs still works. A
+  bundle is validated as a whole: one rejected job fails the bundle.
+
+- Payload errors name the payload type but no longer quote the payload, which
+  can be large or carry personal data.
 
 - Go toolchain **1.26.0 → 1.27.0** (the `go` directive in `go.mod` and
-  `tools/go.mod`, and the CI `setup-go` version), so building this module now
-  requires Go 1.27.0 or newer.
+  `tools/go.mod`), so building this module now requires Go 1.27.0 or newer. CI
+  tracks the latest 1.27.x patch release.
 
 - `go-types` `v0.0.0-20260902160716-5c6c50f32fcd` → **`v1.0.0-beta.2`**. Go's
-  version selection prefers a tagged release over any pseudo-version, so
-  importing this release also upgrades `go-types` in your build. Its
+  minimal version selection uses the highest version any module requires, and
+  `v1.0.0-beta.2` sorts above every `v0.0.0` pseudo-version, so importing this
+  release upgrades `go-types` in your build to at least `v1.0.0-beta.2`. Its
   [CHANGELOG](https://github.com/domonda/go-types/blob/v1.0.0-beta.2/CHANGELOG.md)
   lists the breaking changes. The ones closest to job queue code:
   - `uu.NewID`, which creates job and bundle IDs, makes version 7 UUIDs, and
@@ -49,9 +74,10 @@ now also rejects a JSON `null` payload, a nil pointer payload and invalid
     plus one for the bundle.
   - An empty `nullable.JSON` is now null (`IsNull`, `Value`), and an empty
     `notnull.JSON` now counts as `{}` (`Valid`, `Value`, `UnmarshalTo`). A
-    `RegisterFunc` worker given a hand-built job with an empty, non-nil
-    `notnull.JSON` payload now receives the zero value instead of failing. Jobs
-    from `NewJob` or the database never carry an empty payload.
+    `RegisterFunc` worker called directly through `jobworker.DoJob` with a
+    hand-built job whose payload is an empty, non-nil `notnull.JSON` now
+    receives the zero value instead of failing. Jobs added through the queue or
+    read from the database never carry an empty payload.
   - `RegisterFunc` and `RegisterFuncForJobType` now panic at registration for a
     map argument or result type whose key implements `encoding.TextMarshaler`
     only through its pointer type, because `types.CanMarshalJSON` rejects it
@@ -63,21 +89,26 @@ now also rejects a JSON `null` payload, a nil pointer payload and invalid
 
 - Indirect dependencies followed. `pb33f/ordered-map/v2` v2.3.2 replaces
   `go.yaml.in/yaml/v4` `v4.0.0-rc.4` with `pb33f/go-yaml` v0.1.1, so the
-  release-candidate `yaml/v4` pin described under v0.7.3 is gone.
+  release-candidate `yaml/v4` pin described under 0.7.3 is gone.
 
 ### Fixed
 
 - `NewJob` and its variants no longer panic for a nil `*notnull.JSON` payload,
   whose value-receiver `MarshalJSON` was called through the nil pointer.
 
+- `NewJobReflectType` and `NewJobBundle` (for a `JobDesc` without a `Type`) no
+  longer panic for a nil payload while deriving the job type, and return the
+  "nil job payload" error. `ReflectJobTypeOfPayload(nil)` and
+  `JobTypeOfPayloadType(nil)` return an empty string.
+
 - `NewJob`, `NewJobWithPriority`, `NewJobReflectType` and `NewJobBundle` keep
   rejecting an empty or nil payload (`""`, `[]byte{}`, `json.RawMessage(nil)`,
-  an empty or nil `notnull.JSON`, `nullable.JSON(nil)`) with "job payload is not
-  valid JSON". `go-types` v1.0.0-beta.2 made `notnull.JSON.Valid` report empty
-  input as valid, which would have queued such a job as `{}` and run its worker
-  on a zero-value payload.
+  an empty or nil `notnull.JSON`, `nullable.JSON(nil)`), now with "empty job
+  payload". `go-types` v1.0.0-beta.2 made `notnull.JSON.Valid` report empty input
+  as valid, which would have queued such a job as `{}` and run its worker on a
+  zero-value payload.
 
-## [v0.7.3] - 2026-09-03
+## [0.7.3] - 2026-09-03
 
 Dependency-only release: every dependency moved to its latest stable version. No
 source file changed and no public API moved.
@@ -108,7 +139,7 @@ source file changed and no public API moved.
   `testify`) has only release candidates. `yaml/v4` is held at `v4.0.0-rc.4`, the
   lowest release our own dependencies require, rather than the newest rc.
 
-## [v0.7.2] - 2026-07-30
+## [0.7.2] - 2026-07-30
 
 Jobs carrying user provided data that PostgreSQL cannot store are now persisted
 with the unstorable characters removed, instead of failing the write and losing
@@ -174,7 +205,7 @@ the job.
   and allocates nothing: 0 allocations for a 1MB payload, one allocation when
   something is actually removed.
 
-## [v0.7.1] - 2026-07-02
+## [0.7.1] - 2026-07-02
 
 Quieter shutdowns: a job dispatch cancelled during shutdown is no longer reported
 as an error.
@@ -191,7 +222,7 @@ as an error.
   Genuine failures and per-job `JobTimeout` (`context.DeadlineExceeded`) are
   unaffected and still reported.
 
-## [v0.7.0] - 2026-06-18
+## [0.7.0] - 2026-06-18
 
 Faster job claiming via a cached prepared statement, a dedicated claim index,
 clock-skew-immune claim timestamps, and dependency updates.
@@ -290,7 +321,7 @@ create index concurrently if not exists worker_job_claim_idx
     where started_at is null;
 ```
 
-## [v0.6.0] - 2026-06-17
+## [0.6.0] - 2026-06-17
 
 Worker liveness heartbeat and safe, multi-process crash recovery.
 
@@ -408,15 +439,15 @@ where started_at is not null
 commit;
 ```
 
-## [v0.5.4] - 2026-03-31
+## [0.5.4] - 2026-03-31
 
 Last release before the worker liveness heartbeat work. See the git history for
 details of `v0.5.4` and earlier releases.
 
-[v0.8.0]: https://github.com/domonda/go-jobqueue/compare/v0.7.3...v0.8.0
-[v0.7.3]: https://github.com/domonda/go-jobqueue/compare/v0.7.2...v0.7.3
-[v0.7.2]: https://github.com/domonda/go-jobqueue/compare/v0.7.1...v0.7.2
-[v0.7.1]: https://github.com/domonda/go-jobqueue/compare/v0.7.0...v0.7.1
-[v0.7.0]: https://github.com/domonda/go-jobqueue/compare/v0.6.0...v0.7.0
-[v0.6.0]: https://github.com/domonda/go-jobqueue/compare/v0.5.4...v0.6.0
-[v0.5.4]: https://github.com/domonda/go-jobqueue/releases/tag/v0.5.4
+[0.8.0]: https://github.com/domonda/go-jobqueue/compare/v0.7.3...v0.8.0
+[0.7.3]: https://github.com/domonda/go-jobqueue/compare/v0.7.2...v0.7.3
+[0.7.2]: https://github.com/domonda/go-jobqueue/compare/v0.7.1...v0.7.2
+[0.7.1]: https://github.com/domonda/go-jobqueue/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/domonda/go-jobqueue/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/domonda/go-jobqueue/compare/v0.5.4...v0.6.0
+[0.5.4]: https://github.com/domonda/go-jobqueue/releases/tag/v0.5.4
