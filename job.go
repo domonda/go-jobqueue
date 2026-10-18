@@ -175,10 +175,10 @@ func NewJobWithPriority(
 //
 // Every error matches ErrInvalidPayload and doesn't quote the payload, which can
 // be large or carry personal data, because callers log them. Errors of nil pointers
-// and marshalled payloads name the payload type. A marshalling error keeps the
-// message of its cause: encoding/json's, which may name a field or quote a
-// single value such as an invalid json.Number, or the error returned by the
-// payload's own MarshalJSON method, verbatim.
+// and marshalled payloads name the payload type. A marshalling error keeps
+// encoding/json's message, which may name a field or quote a single value such
+// as an invalid json.Number, and includes verbatim the error of any MarshalJSON
+// or MarshalText method it called, on the payload or on a value inside it.
 func marshalPayload(payload any) (notnull.JSON, error) {
 	// A nil pointer is a nil payload. Checking it first also lets the pointer
 	// cases below dereference without a nil check.
