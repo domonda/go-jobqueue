@@ -71,6 +71,16 @@ func TestNewJobWithPriority_InvalidPayloads(t *testing.T) {
 		{"invalid json.RawMessage", json.RawMessage(`{invalid`)},
 		{"invalid byte slice", []byte(`{invalid`)},
 		{"invalid string", `{invalid`},
+		// Empty input holds no JSON text. go-types v1.0.0-beta.2 made
+		// notnull.JSON.Valid report it as valid (it binds as {}), so these
+		// rows pin that NewJob still rejects it instead of queuing a job
+		// whose worker would run on an all-zero payload.
+		{"empty notnull.JSON", notnull.JSON("")},
+		{"nil notnull.JSON", notnull.JSON(nil)},
+		{"nil nullable.JSON", nullable.JSON(nil)},
+		{"nil json.RawMessage", json.RawMessage(nil)},
+		{"empty byte slice", []byte{}},
+		{"empty string", ""},
 		{"json.Marshaler returning error", marshalerErr{}},
 		{"default unmarshalable value", make(chan int)},
 	}

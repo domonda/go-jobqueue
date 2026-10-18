@@ -142,34 +142,37 @@ func NewJobWithPriority(
 		payloadJSON notnull.JSON
 		err         error
 	)
+	// Validate with json.Valid, not notnull.JSON.Valid: the latter reports
+	// empty input as valid because it binds as {}, but an empty payload holds
+	// no JSON text and must be rejected.
 	switch x := payload.(type) {
 	case notnull.JSON:
 		payloadJSON = x
-		if !payloadJSON.Valid() {
+		if !json.Valid(payloadJSON) {
 			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
 		}
 
 	case nullable.JSON:
 		payloadJSON = notnull.JSON(x)
-		if !payloadJSON.Valid() {
+		if !json.Valid(payloadJSON) {
 			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
 		}
 
 	case json.RawMessage:
 		payloadJSON = notnull.JSON(x)
-		if !payloadJSON.Valid() {
+		if !json.Valid(payloadJSON) {
 			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
 		}
 
 	case []byte:
 		payloadJSON = notnull.JSON(x)
-		if !payloadJSON.Valid() {
+		if !json.Valid(payloadJSON) {
 			return nil, fmt.Errorf("job payload is not valid JSON: %#v", string(x))
 		}
 
 	case string:
 		payloadJSON = notnull.JSON(x)
-		if !payloadJSON.Valid() {
+		if !json.Valid(payloadJSON) {
 			return nil, fmt.Errorf("job payload is not valid JSON: %#v", x)
 		}
 
