@@ -302,10 +302,9 @@ func TestSanitizedWrappersReportRemovedBytes(t *testing.T) {
 	})
 }
 
-// TestSanitizeJSONPreservesNull verifies that sanitizing does not turn a NULL
-// nullable.JSON into a non-NULL empty value. Job result and error data columns
-// are nullable, and an empty non-NULL value is both invalidUTF8 jsonb input and a
-// different state than NULL.
+// TestSanitizeJSONPreservesNull verifies that sanitizing a NULL nullable.JSON
+// keeps it nil instead of turning it into a non-nil empty value. Job result and
+// error data columns are nullable, and a zero-length value is invalid jsonb input.
 func TestSanitizeJSONPreservesNull(t *testing.T) {
 	var null nullable.JSON
 	require.True(t, null.IsNull())

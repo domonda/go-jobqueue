@@ -50,7 +50,8 @@ func sanitizeString(s string) string {
 // as jsonb input while nil is handled by both JSON types: nullable.JSON binds it
 // as NULL, notnull.JSON binds it as the empty object. Since go-types
 // v1.0.0-beta.2 both also bind a zero-length value that way, but returning nil
-// keeps the result storable without relying on the argument type's Valuer.
+// keeps the result storable without relying on how the argument type's Valuer
+// treats a zero-length value, which older go-types versions bound verbatim.
 //
 // Unmarshalling and re-marshalling through encoding/json would remove both escape
 // classes on its own and replace all of this, but it is not an option: a JSON
