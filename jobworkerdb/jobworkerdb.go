@@ -222,6 +222,11 @@ func insertJob(ctx context.Context, job *jobqueue.Job, payload notnull.JSON) (er
 func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, job)
 
+	// NewJob returns a nil job with its error, so a caller that discards the
+	// error passes nil here.
+	if job == nil {
+		return errs.New("nil job")
+	}
 	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
@@ -253,6 +258,16 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 
 func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobBundle) (err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobBundle)
+
+	// Checked before the jobs are modified, so a rejected bundle is left as passed.
+	if jobBundle == nil {
+		return errs.New("nil job bundle")
+	}
+	for i, job := range jobBundle.Jobs {
+		if job == nil {
+			return errs.Errorf("nil job at index %d in job bundle %s", i, jobBundle.ID)
+		}
+	}
 
 	// Make sure jobs are initialized for bundle
 	for _, job := range jobBundle.Jobs {

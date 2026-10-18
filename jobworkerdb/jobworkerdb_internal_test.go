@@ -5,8 +5,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/domonda/go-sqldb/pqconn"
+	"github.com/domonda/go-types/notnull"
+	"github.com/domonda/go-types/uu"
+
+	"github.com/domonda/go-jobqueue"
 )
 
 // TestBuildClaimJobQuery verifies the StartNextJobOrNil claim query is assembled
@@ -77,5 +82,38 @@ func TestBuildClaimJobQuery(t *testing.T) {
 			quoted[i] = formatter.FormatStringLiteral(jt)
 		}
 		assert.Contains(t, query, "in ("+strings.Join(quoted, ",")+")")
+	})
+}
+
+// TestAddNilJob pins that AddJob and AddJobBundle return an error instead of
+// panicking for a nil job or bundle, as passed by a caller that discarded the
+// error of NewJob rejecting a payload. Both return before touching the database.
+func TestAddNilJob(t *testing.T) {
+	var service jobworkerDB
+
+	t.Run("nil job", func(t *testing.T) {
+		var err error
+		require.NotPanics(t, func() { err = service.AddJob(t.Context(), nil) })
+		require.ErrorContains(t, err, "nil job")
+	})
+
+	t.Run("nil job bundle", func(t *testing.T) {
+		var err error
+		require.NotPanics(t, func() { err = service.AddJobBundle(t.Context(), nil) })
+		require.ErrorContains(t, err, "nil job bundle")
+	})
+
+	t.Run("nil job in a bundle", func(t *testing.T) {
+		bundle := &jobqueue.JobBundle{
+			ID:      uu.IDFrom("c2a7c5b4-4b0c-4b3e-9a5a-1f2e3d4c5b6a"),
+			Type:    "bundle-type",
+			Origin:  "origin",
+			NumJobs: 2,
+			Jobs:    []*jobqueue.Job{{Type: "job-type", Origin: "origin", Payload: notnull.JSON(`{}`)}, nil},
+		}
+		var err error
+		require.NotPanics(t, func() { err = service.AddJobBundle(t.Context(), bundle) })
+		require.ErrorContains(t, err, "nil job at index 1")
+		assert.True(t, bundle.Jobs[0].BundleID.IsNull(), "a rejected bundle must not modify its jobs")
 	})
 }
