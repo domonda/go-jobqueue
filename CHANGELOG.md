@@ -75,9 +75,10 @@ including for hand-built `Job` values, with an error matching the new
 
 - `NewJob` payload errors no longer quote the payload, which can be large or
   carry personal data. The error of a payload that can't be marshalled keeps
-  its cause's message: `encoding/json`'s, which can name a field or quote a
-  single value such as an invalid `json.Number`, or the payload's own
-  `MarshalJSON` error, verbatim. The errors of `jobqueue.Add` and `AddBundle` still list
+  `encoding/json`'s message, which can name a field or quote a single value
+  such as an invalid `json.Number`, and includes verbatim the error of any
+  `MarshalJSON` or `MarshalText` method it called, on the payload or a value
+  inside it. The errors of `jobqueue.Add` and `AddBundle` still list
   the job or bundle in their call context, payload included, as before.
 
 - `NewJobBundle` errors name the rejected description, as in
@@ -138,8 +139,9 @@ including for hand-built `Job` values, with an error matching the new
 - `jobqueue.Add` and `jobqueue.AddBundle` with the PostgreSQL service return an
   error instead of panicking for a nil job, a nil bundle or a nil job in a
   bundle. A bundle rejected before anything is stored (nil job, invalid
-  payload, closed service) leaves its jobs unmodified; after a database error
-  its jobs still carry the bundle's ID, as before.
+  payload, closed service) leaves its jobs unmodified; once those checks pass,
+  its jobs carry the bundle's ID even if a synchronous run or the database
+  then fails, as before.
 
 - `NewJobReflectType` and `NewJobBundle` (for a `JobDesc` without a `Type`) no
   longer panic for a nil payload while deriving the job type, and return the
