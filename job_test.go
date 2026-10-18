@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/domonda/go-errs"
 	"github.com/domonda/go-types/notnull"
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
@@ -142,6 +143,15 @@ func TestNewJobWithPriority_InvalidPayloads(t *testing.T) {
 			assert.Nil(t, job)
 		})
 	}
+}
+
+// TestNewJobWithPriority_ErrorRootKeepsReason pins that errs.Root of a payload
+// error, which DoJob uses as a failed job's log title, is the reason and not the
+// bare "invalid job payload" of the ErrInvalidPayload sentinel.
+func TestNewJobWithPriority_ErrorRootKeepsReason(t *testing.T) {
+	_, err := jobqueue.NewJobWithPriority(uu.IDFrom(testJobID), "jobType", "origin", "null", 0, nullable.Time{})
+	require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+	assert.Contains(t, errs.Root(err).Error(), "JSON null")
 }
 
 // TestNewJobWithPriority_ErrorsOmitPayload pins that a rejected payload is not

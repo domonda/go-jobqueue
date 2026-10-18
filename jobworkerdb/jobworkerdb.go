@@ -1,6 +1,7 @@
 package jobworkerdb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -132,19 +133,39 @@ func (*jobworkerDB) unlisten(ctx context.Context) (err error) {
 	return errors.Join(err1, err2)
 }
 
-// checkPayload applies the job queue's payload rules to payload, which is
-// job.Payload as insertJob stores it, after sanitizing. AddJob and AddJobBundle
-// check every job this way before they ignore, run or store it, so a job is
-// accepted or rejected the same way in every mode. Checking the sanitized
-// payload lets a payload the sanitizer repairs, like one with a raw zero byte
-// inside a string, pass even though the raw bytes fail json.Valid.
-func checkPayload(job *jobqueue.Job, payload notnull.JSON) error {
-	// Checked before ValidatePayload for a more specific error than "empty":
-	// the caller passed data, but none of it can be stored.
-	if len(job.Payload) > 0 && len(payload) == 0 {
-		return errs.Errorf("%w: no characters PostgreSQL can store", jobqueue.ErrInvalidPayload)
+// checkPayload applies the job queue's payload rules to a job before AddJob or
+// AddJobBundle ignore, run or store it, so a job is accepted or rejected the
+// same way in every mode. sanitized is job.Payload after sanitizeJSON.
+func checkPayload(job *jobqueue.Job, sanitized notnull.JSON) error {
+	// Checked first for a more specific error than "empty": the caller passed
+	// data, but none of it can be stored.
+	if len(job.Payload) > 0 && len(sanitized) == 0 {
+		return jobqueue.InvalidPayloadError("no characters PostgreSQL can store", nil)
 	}
-	return jobqueue.ValidatePayload(payload)
+	// The rules apply to what the caller sent, not to what sanitizing made of
+	// it: sanitizing removes unstorable bytes anywhere, which would turn broken
+	// JSON like {"n":1<0xff>000} into a different valid value. A raw zero byte
+	// is checked as a space, so one inside a string, which sanitizing removes,
+	// passes like the invalid UTF-8 inside strings that json.Valid accepts.
+	// Valid input can't chain unstorable escapes, so its sanitized form is
+	// storable.
+	raw := []byte(job.Payload)
+	if bytes.IndexByte(raw, 0) >= 0 {
+		raw = bytes.ReplaceAll(raw, []byte{0}, []byte{' '})
+	}
+	return jobqueue.ValidatePayload(raw)
+}
+
+// doJobWithPayload runs job synchronously with payload, its sanitized payload,
+// so the worker sees what it would read back from the database. The caller's
+// payload is restored afterwards; the results DoJob sets on the Job stay.
+func doJobWithPayload(ctx context.Context, job *jobqueue.Job, payload notnull.JSON) error {
+	if len(payload) != len(job.Payload) {
+		original := job.Payload
+		job.Payload = payload
+		defer func() { job.Payload = original }()
+	}
+	return jobworker.DoJob(ctx, job)
 }
 
 // insertJob inserts the job row with payload, which is job.Payload after
@@ -222,9 +243,7 @@ func (j *jobworkerDB) AddJob(ctx context.Context, job *jobqueue.Job) (err error)
 		log.Debug("Synchronous job").
 			UUID("jobID", job.ID).
 			Log()
-		// The worker gets the caller's Job unchanged: only stored payloads
-		// are sanitized.
-		return jobworker.DoJob(ctx, job)
+		return doJobWithPayload(ctx, job, payload)
 	}
 
 	return insertJob(ctx, job, payload)
@@ -242,10 +261,11 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		return jobqueue.ErrClosed
 	}
 
-	// Check every payload before anything is ignored, run or stored, so one
-	// rejected job fails the whole bundle before its row is inserted. The
-	// transaction below would roll that row back, but not when ctx already
-	// carries an outer transaction that the caller might still commit.
+	// Check every payload before anything is ignored, run or stored, so a job
+	// with a rejected payload fails the whole bundle before its row is
+	// inserted. The transaction below would roll that row back, but not inside
+	// an outer transaction the caller might still commit after a Go-side error,
+	// or with db.ContextWithoutTransactions, where nothing is rolled back.
 	payloads := make([]notnull.JSON, len(jobBundle.Jobs))
 	for i, job := range jobBundle.Jobs {
 		payloads[i] = sanitizeJSON(job.Payload)
@@ -265,8 +285,8 @@ func (j *jobworkerDB) AddJobBundle(ctx context.Context, jobBundle *jobqueue.JobB
 		log.Debug("Synchronous job-bundle").
 			UUID("jobBundleID", jobBundle.ID).
 			Log()
-		for _, job := range jobBundle.Jobs {
-			err = jobworker.DoJob(ctx, job)
+		for i, job := range jobBundle.Jobs {
+			err = doJobWithPayload(ctx, job, payloads[i])
 			if err != nil {
 				return err
 			}

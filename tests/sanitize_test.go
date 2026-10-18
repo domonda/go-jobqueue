@@ -231,6 +231,13 @@ func TestAddValidatesHandBuiltPayloads(t *testing.T) {
 		{"JSON null", "f47ac10b-58cc-4372-a567-e00000000061", notnull.JSON("null"), "invalid job payload: JSON null"},
 		{"JSON null with whitespace", "f47ac10b-58cc-4372-a567-e00000000062", notnull.JSON(" null "), "invalid job payload: JSON null"},
 		{"invalid JSON", "f47ac10b-58cc-4372-a567-e00000000063", notnull.JSON(`{invalid`), "invalid job payload: not valid JSON"},
+		// Sanitizing would remove these bytes and leave a different valid value
+		// ({"amount":1000}, true), so the raw payload is what gets checked.
+		{"invalid UTF-8 outside a string", "f47ac10b-58cc-4372-a567-e00000000078", notnull.JSON(`{"amount":1` + invalidUTF8 + `000}`), "invalid job payload: not valid JSON"},
+		{"zero byte inside a literal", "f47ac10b-58cc-4372-a567-e00000000079", notnull.JSON("tr" + rawNul + "ue"), "invalid job payload: not valid JSON"},
+		// Malformed escapes can chain past the sanitizer's bounded strip rounds
+		// and leave a zero byte escape that only PostgreSQL would reject.
+		{"escape chain sanitizing can't strip", "f47ac10b-58cc-4372-a567-e00000000080", notnull.JSON(`{"a":"` + strings.Repeat(`\u00`, 3) + jsonEscapedNul + strings.Repeat("00", 3) + `"}`), "invalid job payload: not valid JSON"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -359,9 +366,13 @@ func TestAddValidatesHandBuiltPayloads(t *testing.T) {
 
 	t.Run("synchronous with a registered worker", func(t *testing.T) {
 		const syncJobType = "test-add-invalid-payload-sync-type"
-		var calls int
-		jobworker.Register(syncJobType, func(context.Context, *jobqueue.Job) (any, error) {
+		var (
+			calls      int
+			gotPayload string
+		)
+		jobworker.Register(syncJobType, func(_ context.Context, job *jobqueue.Job) (any, error) {
 			calls++
+			gotPayload = string(job.Payload)
 			return nil, nil
 		})
 		t.Cleanup(func() { jobworker.Unregister(syncJobType) })
@@ -375,11 +386,15 @@ func TestAddValidatesHandBuiltPayloads(t *testing.T) {
 		})
 
 		t.Run("payload that sanitizing repairs runs like it is stored", func(t *testing.T) {
-			// Same rule as the stored path: checked after sanitizing.
+			// Accepted as in the stored path, and the worker sees the payload
+			// it would read back from the database.
 			calls = 0
-			job := &jobqueue.Job{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000077"), Type: syncJobType, Origin: "test", Payload: notnull.JSON(`{"a":"x` + rawNul + `y"}`)}
+			payload := notnull.JSON(`{"a":"x` + rawNul + `y"}`)
+			job := &jobqueue.Job{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000077"), Type: syncJobType, Origin: "test", Payload: payload}
 			require.NoError(t, jobqueue.Add(ctx, job))
 			assert.Equal(t, 1, calls)
+			assert.JSONEq(t, `{"a":"xy"}`, gotPayload, "the worker runs on the sanitized payload")
+			assert.Equal(t, payload, job.Payload, "the caller's payload is restored")
 		})
 
 		t.Run("bundle with a null payload runs no job", func(t *testing.T) {

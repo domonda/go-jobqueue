@@ -17,12 +17,38 @@ const (
 	// ErrClosed is returned by Service operations after the service has been closed.
 	ErrClosed errs.Sentinel = "jobqueue is closed"
 
-	// ErrInvalidPayload is wrapped by every job payload rejection: from NewJob
+	// ErrInvalidPayload is matched by every job payload rejection: from NewJob
 	// and its variants, ValidatePayload, and the job queue's write path. Test
 	// for it with errors.Is. A rejected payload is rejected again, so an
 	// operation that failed with it must not be retried unchanged.
 	ErrInvalidPayload errs.Sentinel = "invalid job payload"
 )
+
+// InvalidPayloadError returns the error of a rejected job payload with the given
+// reason, for Service implementations that reject payloads. It matches
+// ErrInvalidPayload with errors.Is and unwraps to cause, which may be nil.
+// Unlike wrapping the sentinel with %w, the sentinel is not in its Unwrap chain,
+// so errs.Root, which log titles use, ends at the reason or the cause instead
+// of the bare "invalid job payload".
+func InvalidPayloadError(reason string, cause error) error {
+	return errs.WrapWithCallStackSkip(1, &invalidPayloadError{reason: reason, cause: cause})
+}
+
+type invalidPayloadError struct {
+	reason string
+	cause  error
+}
+
+func (e *invalidPayloadError) Error() string {
+	if e.cause != nil {
+		return string(ErrInvalidPayload) + ": " + e.reason + ": " + e.cause.Error()
+	}
+	return string(ErrInvalidPayload) + ": " + e.reason
+}
+
+func (*invalidPayloadError) Is(target error) bool { return target == ErrInvalidPayload }
+
+func (e *invalidPayloadError) Unwrap() error { return e.cause }
 
 var _ Service = errService{}
 

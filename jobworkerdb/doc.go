@@ -108,12 +108,18 @@ replaced by a placeholder rather than stored empty, because an empty error_msg
 reads back as SQL NULL through nullable.NonEmptyString and would make a failed job
 look successful.
 
-Adding a job also applies [jobqueue.ValidatePayload] to its sanitized payload, so
-an empty, invalid or JSON null payload of a hand-built Job is rejected with an
-error wrapping [jobqueue.ErrInvalidPayload], as NewJob would reject it. The check
-runs before a job is ignored, run synchronously or stored, so all three modes
-accept the same payloads, and before a bundle's first row is inserted, so one
-rejected job fails the whole bundle.
+Adding a job also applies [jobqueue.ValidatePayload] to the payload the caller
+passed, so an empty, invalid or JSON null payload of a hand-built Job is rejected
+with an error matching [jobqueue.ErrInvalidPayload], as NewJob would reject it. A
+raw zero byte counts as a space for this check, so a payload whose only flaw is a
+zero byte inside a string is accepted and stored without it, while bytes that
+break the JSON structure are rejected rather than sanitized into a different
+value. The check runs before a job is ignored, run synchronously or stored, so all
+three modes accept the same payloads, and before a bundle's first row is inserted,
+so a job with a rejected payload fails the whole bundle. A synchronous run gets
+the sanitized payload, as a worker would read it back from the database. A number
+beyond the range of PostgreSQL's numeric type passes the check and fails only on
+insert.
 
 Consequences worth knowing before relying on this:
 
