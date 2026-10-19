@@ -15,6 +15,8 @@ import (
 	"github.com/domonda/go-types/uu"
 
 	"github.com/domonda/go-jobqueue"
+	"github.com/domonda/go-jobqueue/jobworker"
+	"github.com/domonda/go-jobqueue/jobworkerdb"
 )
 
 // rawNul is a raw zero byte, which PostgreSQL stores in neither text nor jsonb.
@@ -198,11 +200,242 @@ func TestAddJobRejectsEntirelyUnstorablePayload(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = jobqueue.DeleteJob(context.Background(), jobID) })
 
-	require.Error(t, jobqueue.Add(t.Context(), job),
-		"a payload with nothing storable left must not be queued")
+	err := jobqueue.Add(t.Context(), job)
+	require.ErrorIs(t, err, jobqueue.ErrInvalidPayload, "a payload with nothing storable left must not be queued")
+	// Pinned because ValidatePayload would reject the emptied payload too,
+	// only with the less specific "empty".
+	require.ErrorContains(t, err, "invalid job payload: no characters PostgreSQL can store")
 
-	_, err := jobqueue.GetJob(t.Context(), jobID)
+	_, err = jobqueue.GetJob(t.Context(), jobID)
 	assert.Error(t, err, "no row may have been written")
+}
+
+// TestAddValidatesHandBuiltPayloads verifies that the write path holds a
+// struct-literal Job to NewJob's payload rules. Without that an empty payload
+// would be stored as {} and a JSON null as jsonb null, and a worker would claim
+// the job and run on a zero value.
+func TestAddValidatesHandBuiltPayloads(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const jobType = "test-add-invalid-payload-type"
+
+	tests := []struct {
+		name    string
+		jobID   string
+		payload notnull.JSON
+		wantErr string
+	}{
+		{"nil payload", "f47ac10b-58cc-4372-a567-e00000000060", nil, "invalid job payload: empty"},
+		{"JSON null", "f47ac10b-58cc-4372-a567-e00000000061", notnull.JSON("null"), "invalid job payload: JSON null"},
+		{"JSON null with whitespace", "f47ac10b-58cc-4372-a567-e00000000062", notnull.JSON(" null "), "invalid job payload: JSON null"},
+		{"invalid JSON", "f47ac10b-58cc-4372-a567-e00000000063", notnull.JSON(`{invalid`), "invalid job payload: not valid JSON"},
+		// Sanitizing would remove these bytes and leave a different valid value
+		// ({"amount":1000}, true), so the raw payload is what gets checked.
+		{"invalid UTF-8 outside a string", "f47ac10b-58cc-4372-a567-e00000000078", notnull.JSON(`{"amount":1` + invalidUTF8 + `000}`), "invalid job payload: not valid JSON"},
+		{"zero byte inside a literal", "f47ac10b-58cc-4372-a567-e00000000079", notnull.JSON("tr" + rawNul + "ue"), "invalid job payload: not valid JSON"},
+		// Malformed escapes can chain past the sanitizer's bounded strip rounds
+		// and leave a zero byte escape that only PostgreSQL would reject.
+		{"escape chain sanitizing can't strip", "f47ac10b-58cc-4372-a567-e00000000080", notnull.JSON(`{"a":"` + strings.Repeat(`\u00`, 3) + jsonEscapedNul + strings.Repeat("00", 3) + `"}`), "invalid job payload: not valid JSON"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jobID := uu.IDFrom(tt.jobID)
+			job := &jobqueue.Job{ID: jobID, Type: jobType, Origin: "test", Payload: tt.payload}
+			t.Cleanup(func() { _ = jobqueue.DeleteJob(context.Background(), jobID) })
+
+			err := jobqueue.Add(t.Context(), job)
+			require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+			require.ErrorContains(t, err, tt.wantErr)
+
+			_, err = jobqueue.GetJob(t.Context(), jobID)
+			assert.Error(t, err, "no row may have been written")
+		})
+	}
+
+	t.Run("bundle", func(t *testing.T) {
+		bundleID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000064")
+		jobID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000065")
+		t.Cleanup(func() {
+			bg := context.Background()
+			_ = jobqueue.GetService(bg).DeleteJobBundle(bg, bundleID)
+			_ = jobqueue.DeleteJob(bg, jobID)
+		})
+
+		err := jobqueue.AddBundle(t.Context(), &jobqueue.JobBundle{
+			ID:      bundleID,
+			Type:    "test-add-invalid-payload-bundle-type",
+			Origin:  "test",
+			NumJobs: 1,
+			Jobs:    []*jobqueue.Job{{ID: jobID, Type: jobType, Origin: "test", Payload: notnull.JSON("null")}},
+		})
+		require.ErrorContains(t, err, "invalid job payload: JSON null")
+
+		_, err = jobqueue.GetJobBundle(t.Context(), bundleID)
+		assert.Error(t, err, "the bundle insert must be rolled back with the job")
+	})
+
+	t.Run("bundle in an outer transaction", func(t *testing.T) {
+		// The bundle's own transaction is not a real one inside an outer
+		// transaction, so a caller that ignores the error and commits would
+		// persist whatever was inserted before the rejected job. The bundle is
+		// checked before its first insert, so nothing is.
+		bundleID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000072")
+		validJobID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000073")
+		nullJobID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000074")
+		t.Cleanup(func() {
+			bg := context.Background()
+			_ = jobqueue.GetService(bg).DeleteJobBundle(bg, bundleID)
+			_ = jobqueue.DeleteJob(bg, validJobID)
+			_ = jobqueue.DeleteJob(bg, nullJobID)
+		})
+
+		err := db.Transaction(t.Context(), func(ctx context.Context) error {
+			err := jobqueue.AddBundle(ctx, &jobqueue.JobBundle{
+				ID:      bundleID,
+				Type:    "test-add-invalid-payload-bundle-type",
+				Origin:  "test",
+				NumJobs: 2,
+				Jobs: []*jobqueue.Job{
+					{ID: validJobID, Type: jobType, Origin: "test", Payload: notnull.JSON(`{}`)},
+					{ID: nullJobID, Type: jobType, Origin: "test", Payload: notnull.JSON("null")},
+				},
+			})
+			assert.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+			return nil // commit despite the error
+		})
+		require.NoError(t, err)
+
+		_, err = jobqueue.GetJobBundle(t.Context(), bundleID)
+		assert.Error(t, err, "no bundle row may have been committed")
+		_, err = jobqueue.GetJob(t.Context(), validJobID)
+		assert.Error(t, err, "no job before the rejected one may have been committed")
+	})
+
+	t.Run("ignore contexts", func(t *testing.T) {
+		// Contexts that stub enqueueing in consumer tests must reject what
+		// the stored path rejects, or those tests would hide the rejection.
+		job := &jobqueue.Job{
+			ID:      uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000075"),
+			Type:    jobType,
+			Origin:  "test",
+			Payload: notnull.JSON("null"),
+		}
+		err := jobqueue.Add(jobworkerdb.ContextWithIgnoreJob(t.Context(), jobworkerdb.IgnoreAllJobs), job)
+		require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+
+		err = jobqueue.AddBundle(jobworkerdb.ContextWithIgnoreJobBundle(t.Context(), jobworkerdb.IgnoreAllJobBundles), &jobqueue.JobBundle{
+			ID:      uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000076"),
+			Type:    "test-add-invalid-payload-bundle-type",
+			Origin:  "test",
+			NumJobs: 1,
+			Jobs:    []*jobqueue.Job{job},
+		})
+		require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+	})
+
+	t.Run("payload that sanitizing repairs is stored", func(t *testing.T) {
+		// A raw zero byte inside a string fails json.Valid but sanitizes away,
+		// so validation must run on the sanitized payload, as it did before the
+		// write path validated at all.
+		jobID := uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000067")
+		job := &jobqueue.Job{ID: jobID, Type: jobType, Origin: "test", Payload: notnull.JSON(`{"a":"x` + rawNul + `y"}`)}
+		t.Cleanup(func() { _ = jobqueue.DeleteJob(context.Background(), jobID) })
+
+		require.NoError(t, jobqueue.Add(t.Context(), job))
+
+		stored, err := jobqueue.GetJob(t.Context(), jobID)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"a":"xy"}`, string(stored.Payload))
+	})
+
+	t.Run("synchronous", func(t *testing.T) {
+		// Nothing is stored, but the worker must not run on a null payload
+		// either. No worker is registered for the type, so without the payload
+		// check the error would name the missing worker instead.
+		ctx := jobworkerdb.ContextWithSynchronousJobs(t.Context())
+		job := &jobqueue.Job{
+			ID:      uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000066"),
+			Type:    jobType,
+			Origin:  "test",
+			Payload: notnull.JSON("null"),
+		}
+		require.ErrorContains(t, jobqueue.Add(ctx, job), "invalid job payload: JSON null")
+	})
+
+	t.Run("synchronous with a registered worker", func(t *testing.T) {
+		const syncJobType = "test-add-invalid-payload-sync-type"
+		var (
+			calls      int
+			gotPayload string
+		)
+		jobworker.Register(syncJobType, func(_ context.Context, job *jobqueue.Job) (any, error) {
+			calls++
+			gotPayload = string(job.Payload)
+			return nil, nil
+		})
+		t.Cleanup(func() { jobworker.Unregister(syncJobType) })
+		ctx := jobworkerdb.ContextWithSynchronousJobs(t.Context())
+
+		t.Run("valid job runs its worker", func(t *testing.T) {
+			calls = 0
+			job := &jobqueue.Job{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000068"), Type: syncJobType, Origin: "test", Payload: notnull.JSON(`{}`)}
+			require.NoError(t, jobqueue.Add(ctx, job))
+			assert.Equal(t, 1, calls)
+		})
+
+		t.Run("payload that sanitizing repairs runs like it is stored", func(t *testing.T) {
+			// Accepted as in the stored path, and the worker sees the payload
+			// it would read back from the database.
+			calls = 0
+			payload := notnull.JSON(`{"a":"x` + rawNul + `y"}`)
+			job := &jobqueue.Job{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000077"), Type: syncJobType, Origin: "test", Payload: payload}
+			require.NoError(t, jobqueue.Add(ctx, job))
+			assert.Equal(t, 1, calls)
+			assert.JSONEq(t, `{"a":"xy"}`, gotPayload, "the worker runs on the sanitized payload")
+			assert.Equal(t, payload, job.Payload, "the caller's payload is restored")
+		})
+
+		t.Run("bundle job runs on its own sanitized payload", func(t *testing.T) {
+			// Each job of a synchronous bundle gets its own sanitized payload,
+			// and the caller's payloads are restored afterwards.
+			calls = 0
+			repairable := notnull.JSON(`{"b":"x` + rawNul + `z"}`)
+			jobs := []*jobqueue.Job{
+				{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000081"), Type: syncJobType, Origin: "test", Payload: notnull.JSON(`{"a":1}`)},
+				{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000082"), Type: syncJobType, Origin: "test", Payload: repairable},
+			}
+			require.NoError(t, jobqueue.AddBundle(ctx, &jobqueue.JobBundle{
+				ID:      uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000083"),
+				Type:    "test-add-invalid-payload-sync-bundle-type",
+				Origin:  "test",
+				NumJobs: 2,
+				Jobs:    jobs,
+			}))
+			assert.Equal(t, 2, calls)
+			assert.JSONEq(t, `{"b":"xz"}`, gotPayload, "the last job ran on its sanitized payload")
+			assert.Equal(t, repairable, jobs[1].Payload, "the caller's payload is restored")
+		})
+
+		t.Run("bundle with a null payload runs no job", func(t *testing.T) {
+			// The valid first job must not run either: the whole bundle is
+			// validated before any of its jobs is executed.
+			calls = 0
+			err := jobqueue.AddBundle(ctx, &jobqueue.JobBundle{
+				ID:      uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000069"),
+				Type:    "test-add-invalid-payload-sync-bundle-type",
+				Origin:  "test",
+				NumJobs: 2,
+				Jobs: []*jobqueue.Job{
+					{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000070"), Type: syncJobType, Origin: "test", Payload: notnull.JSON(`{}`)},
+					{ID: uu.IDFrom("f47ac10b-58cc-4372-a567-e00000000071"), Type: syncJobType, Origin: "test", Payload: notnull.JSON("null")},
+				},
+			})
+			require.ErrorContains(t, err, "invalid job payload: JSON null")
+			assert.Zero(t, calls, "no job of a rejected bundle may run")
+		})
+	})
 }
 
 // TestSetJobErrorSanitizesErrorStrings verifies that a job failure is recorded

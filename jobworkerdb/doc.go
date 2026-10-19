@@ -90,7 +90,9 @@ Rather than failing the write and losing the job, this package silently removes
 those characters as it writes. This applies to the job origin, payload, error
 message, error data and result, and to the job bundle origin. Values read back
 from the database therefore may be missing characters that were present in the
-Job passed to AddJob — the in-memory Job itself is never modified.
+Job passed to AddJob — the in-memory Job itself is not modified, except that a
+synchronous run sets its Payload to the sanitized payload while the worker runs
+and restores it afterwards.
 
 Sanitizing applies to values being WRITTEN, never to a value used to look rows up.
 [jobworkerDB.DeleteJobsFromOrigin] and [jobworkerDB.DeleteJobBundlesFromOrigin]
@@ -107,6 +109,24 @@ worker as an all-zero payload. And an error message that sanitizes to empty is
 replaced by a placeholder rather than stored empty, because an empty error_msg
 reads back as SQL NULL through nullable.NonEmptyString and would make a failed job
 look successful.
+
+Adding a job also applies [jobqueue.ValidatePayload] to the payload the caller
+passed, so an empty, invalid or JSON null payload of a hand-built Job is rejected
+with an error matching [jobqueue.ErrInvalidPayload], as NewJob would reject it. A
+raw zero byte counts as a space for this check, so a payload whose only flaw is a
+zero byte inside a string is accepted and stored without it, while bytes that
+break the JSON structure are rejected rather than sanitized into a different
+value. The check runs before a job is ignored, run synchronously or stored, so all
+three modes accept the same payloads, and before a bundle's first row is inserted,
+so a job with a rejected payload fails the whole bundle. A synchronous run gets
+the sanitized payload that would be stored, which jsonb may still normalize on
+read, for example numbers and key order.
+
+Sanitizing changes the content of strings, and that includes object keys: keys
+that differ only in removed characters become equal, and jsonb keeps the last of
+duplicate keys. Numbers are stored as PostgreSQL's numeric type: a number beyond
+its range fails the insert, and a huge exponent can expand far beyond its
+written size when the row is read.
 
 Consequences worth knowing before relying on this:
 
@@ -136,11 +156,11 @@ value is not repaired and the write still fails. Detecting them would mean anoth
 full scan of every payload on the write path, on top of the two cheap vectorized
 scans already done for zero bytes and UTF-8 validity.
 
-Synchronous jobs are not sanitized. ContextWithSynchronousJobs executes jobs
-without touching the database, so the worker receives the payload and origin
-exactly as passed, while the same job persisted normally would be given the
-sanitized values. Tests using that helper cannot reproduce what a production
-worker reads.
+Synchronous jobs get the sanitized payload but not the sanitized origin.
+ContextWithSynchronousJobs executes jobs without touching the database, so the
+worker receives the payload that would be stored, before any normalization jsonb
+applies on read, and the origin exactly as passed. Tests using that helper cannot
+reproduce everything a production worker reads.
 
 The job and job bundle Type is deliberately not sanitized, so an unstorable Type
 fails the write loudly instead. Job.Type is a dispatch key: jobworker looks a
@@ -170,7 +190,7 @@ Synchronous job execution (no database persistence):
 Ignore all jobs using the [IgnoreAllJobs] predicate:
 
 	ctx = jobworkerdb.ContextWithIgnoreJob(ctx, jobworkerdb.IgnoreAllJobs)
-	jobqueue.Add(ctx, job) // Job is discarded
+	jobqueue.Add(ctx, job) // Job is discarded once its payload passed the check
 
 Ignore jobs of a specific type:
 
@@ -179,7 +199,7 @@ Ignore jobs of a specific type:
 Ignore all job bundles using the [IgnoreAllJobBundles] predicate:
 
 	ctx = jobworkerdb.ContextWithIgnoreJobBundle(ctx, jobworkerdb.IgnoreAllJobBundles)
-	jobqueue.AddBundle(ctx, bundle) // Bundle is discarded
+	jobqueue.AddBundle(ctx, bundle) // Bundle is discarded once its payloads passed the check
 
 Custom filtering with [IgnoreJobFunc] and [IgnoreJobBundleFunc]:
 

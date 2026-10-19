@@ -48,6 +48,16 @@ func TestNewJobBundle(t *testing.T) {
 		assert.Equal(t, jobqueue.ReflectJobTypeOfPayload(payload), bundle.Jobs[0].Type)
 	})
 
+	t.Run("nil payload with empty desc type returns error", func(t *testing.T) {
+		// The type falls back to reflection on the nil payload, which must
+		// not panic before NewJobWithPriority reports the nil payload.
+		descs := []jobqueue.JobDesc{{Payload: nil, Origin: "origin"}}
+		bundle, err := jobqueue.NewJobBundle(t.Context(), "bundleType", "bundleOrigin", descs, nullable.Time{})
+		require.ErrorIs(t, err, jobqueue.ErrInvalidPayload)
+		require.ErrorContains(t, err, "jobDescriptions[0]", "names the rejected description")
+		assert.Nil(t, bundle)
+	})
+
 	t.Run("propagates job creation error", func(t *testing.T) {
 		// A nil payload makes NewJobWithPriority fail, which must abort the bundle.
 		descs := []jobqueue.JobDesc{{Type: "type-a", Payload: nil, Origin: "origin"}}

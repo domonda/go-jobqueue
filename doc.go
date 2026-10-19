@@ -40,8 +40,13 @@ First, initialize the service and register workers:
 		defer jobworker.FinishThreads(ctx)
 
 		// Add jobs
-		job, _ := jobqueue.NewJob(uu.NewID(ctx), "my-job", "origin", payload, nullable.Time{})
-		jobqueue.Add(ctx, job)
+		job, err := jobqueue.NewJob(uu.NewID(ctx), "my-job", "origin", payload, nullable.Time{})
+		if err != nil {
+			log.Fatal(err) // payload is nil, empty, invalid JSON or JSON null
+		}
+		if err := jobqueue.Add(ctx, job); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 # Job Types
@@ -121,8 +126,9 @@ GetService.
 # Testing
 
 For testing, jobs can be executed synchronously without database persistence using
-jobworkerdb.ContextWithSynchronousJobs, or ignored entirely using
-jobworkerdb.ContextWithIgnoreJob.
+jobworkerdb.ContextWithSynchronousJobs, or ignored using
+jobworkerdb.ContextWithIgnoreJob. In both, a payload the queue would refuse to
+store still fails with an error matching ErrInvalidPayload.
 
 # Error Handling
 

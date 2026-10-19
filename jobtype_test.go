@@ -23,6 +23,7 @@ func TestJobTypeOfPayloadType(t *testing.T) {
 		{"another stdlib type", reflect.TypeFor[bytes.Buffer](), "bytes.Buffer"},
 		{"builtin int has empty package path", reflect.TypeFor[int](), ".int"},
 		{"builtin string has empty package path", reflect.TypeFor[string](), ".string"},
+		{"nil type", nil, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -35,6 +36,7 @@ func TestReflectJobTypeOfPayload(t *testing.T) {
 	assert.Equal(t, "time.Time", jobqueue.ReflectJobTypeOfPayload(time.Time{}))
 	assert.Equal(t, "time.Time", jobqueue.ReflectJobTypeOfPayload(&time.Time{}), "pointer payload is dereferenced")
 	assert.Equal(t, "bytes.Buffer", jobqueue.ReflectJobTypeOfPayload(bytes.Buffer{}))
+	assert.Empty(t, jobqueue.ReflectJobTypeOfPayload(nil), "nil payload has no type and must not panic")
 
 	// ReflectJobTypeOfPayload is just JobTypeOfPayloadType applied to the
 	// payload's reflect.Type; the two must agree for the same value.

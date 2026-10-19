@@ -16,7 +16,36 @@ const (
 
 	// ErrClosed is returned by Service operations after the service has been closed.
 	ErrClosed errs.Sentinel = "jobqueue is closed"
+
+	// ErrInvalidPayload is matched by every job payload rejection: from NewJob
+	// and its variants, ValidatePayload, and the job queue's write path. Test
+	// for it with errors.Is. A rejected payload is rejected again, so an
+	// operation that failed with it must not be retried unchanged.
+	ErrInvalidPayload errs.Sentinel = "invalid job payload"
 )
+
+// InvalidPayloadError returns the error of a rejected job payload with the given
+// reason and an optional cause, for Service implementations that reject
+// payloads. It matches ErrInvalidPayload with errors.Is. It does not wrap the
+// sentinel or the cause: errs.Root, which log titles use, then ends at this
+// error with its reason instead of the bare "invalid job payload", and a cause
+// like context.Canceled from a MarshalJSON method can't make the rejection
+// look like a cancellation. The cause only contributes its message.
+func InvalidPayloadError(reason string, cause error) error {
+	if cause != nil {
+		reason += ": " + cause.Error()
+	}
+	return errs.WrapWithCallStackSkip(1, invalidPayloadError(reason))
+}
+
+// invalidPayloadError is the reason of a rejected payload.
+type invalidPayloadError string
+
+func (e invalidPayloadError) Error() string {
+	return string(ErrInvalidPayload) + ": " + string(e)
+}
+
+func (invalidPayloadError) Is(target error) bool { return target == ErrInvalidPayload }
 
 var _ Service = errService{}
 

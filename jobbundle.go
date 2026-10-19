@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/domonda/go-errs"
 	"github.com/domonda/go-sqldb/db"
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
@@ -85,7 +86,8 @@ func NewJobBundle(ctx context.Context, jobBundleType, jobBundleOrigin string, jo
 		}
 		job, err := NewJobWithPriority(uu.NewID(ctx), jobType, desc.Origin, desc.Payload, desc.Priority, startAt)
 		if err != nil {
-			return nil, err
+			// Payload errors don't quote the payload, so name the description.
+			return nil, errs.Errorf("jobDescriptions[%d] of type %q: %w", i, jobType, err)
 		}
 		jobs[i] = job
 	}
