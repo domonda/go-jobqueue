@@ -31,6 +31,13 @@ gains two methods, so callers and `Service` implementations need small changes.
   on write is found by its stored form. Lookup errors don't quote the payload,
   apart from what a marshalling error names (see `MarshalJobPayload`).
 
+- **Schema:** the new index `worker_job_unstopped_payload_idx` (in
+  `schema/worker/job.sql`) makes the payload lookups for jobs still to be
+  processed an index probe instead of a scan over every unstopped job. Apply it
+  to existing databases with
+  `create index worker_job_unstopped_payload_idx on worker.job using hash (payload) where stopped_at is null;`
+  (add `concurrently` to avoid blocking writes on a large table).
+
 - `jobqueue.MarshalJobPayload(payload)` exposes the conversion `NewJob` applies
   to a payload, for code that needs the JSON a job would store.
 

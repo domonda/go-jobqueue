@@ -74,9 +74,9 @@ type Service interface {
 	// null) returns an error matching ErrInvalidPayload, and so does a payload
 	// containing characters PostgreSQL can't store. AddJob removes such characters
 	// on write, but a lookup matches verbatim, so such a job is found by its stored
-	// payload. No index covers the payload, so a lookup reads every job of jobType
-	// still in the queue; prune finished jobs with DeleteFinishedJobs to keep it
-	// cheap.
+	// payload. A lookup with stopped false uses a payload index; one with stopped
+	// true reads every stopped job of jobType still in the queue, so prune
+	// finished jobs with DeleteFinishedJobs to keep it cheap.
 	GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) ([]*Job, error)
 
 	// HasJobWithTypeAndPayload reports whether any job exists with the given type and

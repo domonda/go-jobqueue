@@ -540,21 +540,31 @@ func (j *jobworkerDB) GetJobsWithTypeAndPayload(ctx context.Context, jobType str
 	}
 
 	// stopped selects the lifecycle state: stopped jobs have a non-NULL stopped_at,
-	// jobs still to be processed have a NULL stopped_at. Comparing the predicate
-	// with the boolean parameter, (stopped_at is not null) = $3, lets a single
-	// statement cover both cases.
-	return db.QueryRowsAsSlice[*jobqueue.Job](ctx,
-		/*sql*/ `
+	// jobs still to be processed have a NULL stopped_at. Each state gets its own
+	// static predicate instead of comparing with a boolean parameter, so the
+	// planner can match `stopped_at is null` to worker_job_unstopped_payload_idx
+	// even with a cached generic plan.
+	query := /*sql*/ `
+		select *
+		from worker.job
+		where type = $1
+			and payload = $2
+			and stopped_at is null
+		order by created_at
+	`
+	if stopped {
+		query = /*sql*/ `
 			select *
 			from worker.job
 			where type = $1
 				and payload = $2
-				and (stopped_at is not null) = $3
+				and stopped_at is not null
 			order by created_at
-		`,
+		`
+	}
+	return db.QueryRowsAsSlice[*jobqueue.Job](ctx, query,
 		jobType,                       // $1
 		sqldb.KeepSecret(payloadJSON), // $2
-		stopped,                       // $3
 	)
 }
 
@@ -575,19 +585,32 @@ func (j *jobworkerDB) HasJobWithTypeAndPayload(ctx context.Context, jobType stri
 		return false, err
 	}
 
-	return db.QueryRowAs[bool](ctx,
-		/*sql*/ `
+	// Static predicate per state, as in GetJobsWithTypeAndPayload, so the
+	// duplicate check for jobs still to be processed uses
+	// worker_job_unstopped_payload_idx.
+	query := /*sql*/ `
+		select exists (
+			select
+			from worker.job
+			where type = $1
+				and payload = $2
+				and stopped_at is null
+		)
+	`
+	if stopped {
+		query = /*sql*/ `
 			select exists (
 				select
 				from worker.job
 				where type = $1
 					and payload = $2
-					and (stopped_at is not null) = $3
+					and stopped_at is not null
 			)
-		`,
+		`
+	}
+	return db.QueryRowAs[bool](ctx, query,
 		jobType,                       // $1
 		sqldb.KeepSecret(payloadJSON), // $2
-		stopped,                       // $3
 	)
 }
 
