@@ -101,6 +101,13 @@ is reachable by the sanitized string or by ID, but not by the original. Normaliz
 a destructive unbounded key would be worse: sanitizing is not injective, so it
 could collapse one origin onto another and delete jobs the caller never named.
 
+The payload lookups [jobworkerDB.GetJobsWithTypeAndPayload] and
+[jobworkerDB.HasJobWithTypeAndPayload] match verbatim too, for the same reason:
+a sanitized lookup payload could collapse onto another payload and read its
+jobs. A lookup payload that sanitizing would change returns an error matching
+jobqueue.ErrInvalidPayload, so a job whose payload was sanitized on write is
+found by its sanitized payload or by ID.
+
 Three cases are not silently repaired, and fail the write instead. An origin
 consisting entirely of unstorable characters sanitizes to empty and violates the
 column's non-empty constraint. A payload with nothing storable left is rejected

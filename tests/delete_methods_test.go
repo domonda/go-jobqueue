@@ -48,12 +48,64 @@ func TestDeleteFinishedJobs(t *testing.T) {
 	insertTestBundle(t, bundleID, "test-delete-finished-bundle", origin)
 	insertTestBundledJob(t, bundledID, bundleID, "test-delete-finished-type", origin, time.Now())
 
-	require.NoError(t, jobqueue.DeleteFinishedJobs(t.Context()))
+	// finishedFor == 0 deletes all finished standalone jobs without errors.
+	require.NoError(t, jobqueue.DeleteFinishedJobs(t.Context(), 0))
 
 	assert.Equal(t, 0, countJobByID(t, finishedID), "a finished standalone job is deleted")
 	assert.Equal(t, 1, countJobByID(t, erroredID), "a job with an error is kept")
 	assert.Equal(t, 1, countJobByID(t, openID), "an unstopped job is kept")
 	assert.Equal(t, 1, countJobByID(t, bundledID), "a finished job in a bundle is kept")
+}
+
+func TestDeleteFinishedJobsFinishedFor(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const origin = "test-delete-finished-for"
+	t.Cleanup(func() {
+		bg := context.Background()
+		_ = db.Exec(bg, `delete from worker.job where origin = $1`, origin)
+		_ = db.Exec(bg, `delete from worker.job_bundle where origin = $1`, origin)
+	})
+
+	const jobType = "test-delete-finished-for-type"
+	now := time.Now()
+	oldID := uu.IDFrom("e2a60000-0000-4000-8000-000000000001")        // stopped 2h ago -> deleted
+	withinID := uu.IDFrom("e2a60000-0000-4000-8000-000000000002")     // stopped 30min ago -> kept
+	recentID := uu.IDFrom("e2a60000-0000-4000-8000-000000000003")     // stopped just now -> kept
+	oldErroredID := uu.IDFrom("e2a60000-0000-4000-8000-000000000004") // stopped 2h ago with error -> kept
+	oldOpenID := uu.IDFrom("e2a60000-0000-4000-8000-000000000005")    // started 3h ago, not stopped -> kept
+	oldBundledID := uu.IDFrom("e2a60000-0000-4000-8000-000000000006") // stopped 2h ago in a bundle -> kept
+	bundleID := uu.IDFrom("e2b50000-0000-4000-8000-000000000001")
+
+	insertTestJob(t, oldID, jobType, origin, now.Add(-3*time.Hour), now.Add(-2*time.Hour), nil)
+	// Inside the one hour window, but older than a minute: a finishedFor
+	// converted with the wrong unit (minutes or hours read as seconds) shrinks
+	// the cutoff and deletes it.
+	insertTestJob(t, withinID, jobType, origin, now.Add(-time.Hour), now.Add(-30*time.Minute), nil)
+	insertTestJob(t, recentID, jobType, origin, now, now, nil)
+	// Old enough, but excluded by the same filters as DeleteFinishedJobs(ctx, 0):
+	// the finishedFor > 0 query repeats them and must not drift.
+	insertTestJob(t, oldErroredID, jobType, origin, now.Add(-3*time.Hour), now.Add(-2*time.Hour), "boom")
+	insertTestJob(t, oldOpenID, jobType, origin, now.Add(-3*time.Hour), nil, nil)
+	insertTestBundle(t, bundleID, "test-delete-finished-for-bundle", origin)
+	insertTestBundledJob(t, oldBundledID, bundleID, jobType, origin, now.Add(-2*time.Hour))
+
+	// A negative finishedFor is rejected instead of deleting every finished job.
+	require.Error(t, jobqueue.DeleteFinishedJobs(t.Context(), -time.Hour))
+	assert.Equal(t, 1, countJobByID(t, recentID), "a negative finishedFor deletes nothing")
+	assert.Equal(t, 1, countJobByID(t, oldID), "a negative finishedFor deletes nothing")
+
+	// Only delete jobs that have been finished for at least one hour.
+	require.NoError(t, jobqueue.DeleteFinishedJobs(t.Context(), time.Hour))
+
+	assert.Equal(t, 0, countJobByID(t, oldID), "a job finished longer ago than finishedFor is deleted")
+	assert.Equal(t, 1, countJobByID(t, withinID), "a job finished 30min ago is kept with a one hour finishedFor")
+	assert.Equal(t, 1, countJobByID(t, recentID), "a job finished more recently than finishedFor is kept")
+	assert.Equal(t, 1, countJobByID(t, oldErroredID), "an old job with an error is kept")
+	assert.Equal(t, 1, countJobByID(t, oldOpenID), "an old unstopped job is kept")
+	assert.Equal(t, 1, countJobByID(t, oldBundledID), "an old finished job in a bundle is kept")
 }
 
 func TestDeleteJobsFromOrigin(t *testing.T) {

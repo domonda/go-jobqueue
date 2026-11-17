@@ -179,7 +179,7 @@ func doJobWithPayload(ctx context.Context, job *jobqueue.Job, payload notnull.JS
 // An origin whose every character is unstorable sanitizes to "" and fails the
 // insert with check(length(origin) > 0).
 func insertJob(ctx context.Context, job *jobqueue.Job, payload notnull.JSON) (err error) {
-	// payload is not passed: job already holds it, so it would be quoted twice.
+	// payload is not passed: job holds it, and Job.PrettyPrint redacts it there.
 	defer errs.WrapWithFuncParams(&err, ctx, job)
 
 	logSanitized(ctx, "jobID", job.ID, "payload", len(job.Payload), len(payload))
@@ -208,14 +208,14 @@ func insertJob(ctx context.Context, job *jobqueue.Job, payload notnull.JSON) (er
 				$8
 			)
 		`,
-		job.ID,            // $1
-		job.BundleID,      // $2
-		job.Type,          // $3
-		payload,           // $4
-		job.Priority,      // $5
-		origin,            // $6
-		job.MaxRetryCount, // $7
-		job.StartAt,       // $8
+		job.ID,                    // $1
+		job.BundleID,              // $2
+		job.Type,                  // $3
+		sqldb.KeepSecret(payload), // $4: redacted from the query in database errors
+		job.Priority,              // $5
+		origin,                    // $6
+		job.MaxRetryCount,         // $7
+		job.StartAt,               // $8
 	)
 }
 
@@ -497,6 +497,120 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 
 	return db.QueryRowAs[*jobqueue.Job](ctx,
 		/*sql*/ `select * from worker.job where id = $1`, jobID,
+	)
+}
+
+// marshalLookupPayload converts the payload of a payload lookup to JSON with
+// jobqueue.MarshalJobPayload, the conversion AddJob's jobs are created with,
+// and rejects a payload that sanitizing would change.
+//
+// The lookup key is matched verbatim, never sanitized, for the reason given in
+// the String Sanitization section of the package documentation: sanitizing is
+// not injective, so a sanitized key such as {"tenant_id":"mine",
+// "tenant_id\u0000":"other"} could collapse onto another payload and match its
+// jobs. Matching the unsanitized key verbatim would fail the jsonb cast instead,
+// so such a payload returns an error matching jobqueue.ErrInvalidPayload. A job
+// whose payload was sanitized on write is found by its sanitized payload.
+func marshalLookupPayload(payload any) (notnull.JSON, error) {
+	payloadJSON, err := jobqueue.MarshalJobPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	// sanitizeJSON only removes bytes, so a changed payload is a shorter one.
+	if len(sanitizeJSON(payloadJSON)) != len(payloadJSON) {
+		return nil, jobqueue.InvalidPayloadError("contains characters PostgreSQL can't store", nil)
+	}
+	return payloadJSON, nil
+}
+
+func (j *jobworkerDB) GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (jobs []*jobqueue.Job, err error) {
+	// The payload can carry personal data and errors get logged, so it is
+	// redacted from the error call stack and from the query in database errors.
+	defer errs.WrapWithFuncParams(&err, ctx, jobType, errs.KeepSecret(payload), stopped)
+
+	if j.closed.Load() {
+		return nil, jobqueue.ErrClosed
+	}
+
+	// The actual comparison is done by PostgreSQL's jsonb = jsonb operator, so the
+	// match is independent of object key order and insignificant whitespace.
+	payloadJSON, err := marshalLookupPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	// stopped selects the lifecycle state: stopped jobs have a non-NULL stopped_at,
+	// jobs still to be processed have a NULL stopped_at. Each state gets its own
+	// static predicate instead of comparing with a boolean parameter, so the
+	// planner can match `stopped_at is null` to worker_job_unstopped_payload_idx
+	// even with a cached generic plan.
+	query := /*sql*/ `
+		select *
+		from worker.job
+		where type = $1
+			and payload = $2
+			and stopped_at is null
+		order by created_at
+	`
+	if stopped {
+		query = /*sql*/ `
+			select *
+			from worker.job
+			where type = $1
+				and payload = $2
+				and stopped_at is not null
+			order by created_at
+		`
+	}
+	return db.QueryRowsAsSlice[*jobqueue.Job](ctx, query,
+		jobType,                       // $1
+		sqldb.KeepSecret(payloadJSON), // $2
+	)
+}
+
+func (j *jobworkerDB) HasJobWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (exists bool, err error) {
+	// The payload can carry personal data and errors get logged, so it is
+	// redacted from the error call stack and from the query in database errors.
+	defer errs.WrapWithFuncParams(&err, ctx, jobType, errs.KeepSecret(payload), stopped)
+
+	if j.closed.Load() {
+		return false, jobqueue.ErrClosed
+	}
+
+	// Same payload conversion and jsonb comparison as GetJobsWithTypeAndPayload;
+	// this is the existence-only companion, so it runs a SELECT EXISTS and
+	// fetches no rows.
+	payloadJSON, err := marshalLookupPayload(payload)
+	if err != nil {
+		return false, err
+	}
+
+	// Static predicate per state, as in GetJobsWithTypeAndPayload, so the
+	// duplicate check for jobs still to be processed uses
+	// worker_job_unstopped_payload_idx.
+	query := /*sql*/ `
+		select exists (
+			select
+			from worker.job
+			where type = $1
+				and payload = $2
+				and stopped_at is null
+		)
+	`
+	if stopped {
+		query = /*sql*/ `
+			select exists (
+				select
+				from worker.job
+				where type = $1
+					and payload = $2
+					and stopped_at is not null
+			)
+		`
+	}
+	return db.QueryRowAs[bool](ctx, query,
+		jobType,                       // $1
+		sqldb.KeepSecret(payloadJSON), // $2
 	)
 }
 
@@ -1114,20 +1228,41 @@ func (j *jobworkerDB) DeleteJobsOfType(ctx context.Context, jobType string) (err
 	)
 }
 
-func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context) (err error) {
-	defer errs.WrapWithFuncParams(&err, ctx)
+func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context, finishedFor time.Duration) (err error) {
+	defer errs.WrapWithFuncParams(&err, ctx, finishedFor)
 
 	if j.closed.Load() {
 		return jobqueue.ErrClosed
 	}
 
+	// A negative duration is a caller mistake, likely meant as "older than", and
+	// must not fall through to deleting every finished job.
+	if finishedFor < 0 {
+		return errs.New("negative finishedFor")
+	}
+	if finishedFor == 0 {
+		return db.Exec(ctx,
+			/*sql*/ `
+				delete from worker.job
+				where stopped_at is not null
+					and	error_msg is null
+					and	bundle_id is null
+			`,
+		)
+	}
+
+	// Only delete jobs whose stopped_at is older than finishedFor, evaluated with
+	// the database clock (now() - make_interval) so the cutoff is immune to clock
+	// skew between the caller and the database.
 	return db.Exec(ctx,
 		/*sql*/ `
 			delete from worker.job
 			where stopped_at is not null
 				and	error_msg is null
 				and	bundle_id is null
+				and stopped_at < now() - make_interval(secs => $1)
 		`,
+		finishedFor.Seconds(), // $1
 	)
 }
 

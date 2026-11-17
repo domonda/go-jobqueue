@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/domonda/go-sqldb/db"
+	"github.com/domonda/go-types/notnull"
+	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
 
 	"github.com/domonda/go-jobqueue"
@@ -150,6 +152,233 @@ func TestGetAllJobsStartedBefore(t *testing.T) {
 	assert.False(t, containsJobID(jobs, notStartedID), "a never-started job is excluded")
 	assert.False(t, containsJobID(jobs, startedStoppedID), "a stopped job is excluded")
 	assert.False(t, containsJobID(jobs, startedFutureID), "a job started after the cutoff is excluded")
+}
+
+func TestGetJobsWithTypeAndPayload(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const origin = "test-get-jobs-by-payload"
+	t.Cleanup(func() {
+		_ = db.Exec(context.Background(), `delete from worker.job where origin = $1`, origin)
+	})
+
+	const jobType = "test-get-jobs-by-payload-type"
+
+	// insertWithPayload inserts a standalone job with an explicit jsonb payload.
+	// Pass a time for stoppedAt to mark the job stopped, or nil to leave it to do.
+	insertWithPayload := func(id uu.ID, jt, payload string, stoppedAt any) {
+		t.Helper()
+		err := db.Exec(t.Context(),
+			/*sql*/ `
+				insert into worker.job (id, type, payload, priority, origin, max_retry_count, stopped_at)
+				values ($1, $2, $3::jsonb, 0, $4, 0, $5)
+			`,
+			id, jt, payload, origin, stoppedAt,
+		)
+		require.NoError(t, err)
+	}
+
+	matchID := uu.IDFrom("e1a50000-0000-4000-8000-000000000001")        // matching type and payload, to do
+	keyOrderID := uu.IDFrom("e1a50000-0000-4000-8000-000000000002")     // same payload, different key order, to do
+	otherPayloadID := uu.IDFrom("e1a50000-0000-4000-8000-000000000003") // different payload value
+	otherTypeID := uu.IDFrom("e1a50000-0000-4000-8000-000000000004")    // same payload, different type
+	stoppedID := uu.IDFrom("e1a50000-0000-4000-8000-000000000005")      // matching type and payload, but stopped
+
+	insertWithPayload(matchID, jobType, `{"a": 1, "b": 2}`, nil)
+	insertWithPayload(keyOrderID, jobType, `{"b": 2, "a": 1}`, nil)
+	insertWithPayload(otherPayloadID, jobType, `{"a": 1, "b": 3}`, nil)
+	insertWithPayload(otherTypeID, "test-get-jobs-by-payload-other-type", `{"a": 1, "b": 2}`, nil)
+	insertWithPayload(stoppedID, jobType, `{"a": 1, "b": 2}`, time.Now())
+
+	// stopped=false: the query payload is marshalled to JSON and compared as jsonb,
+	// so a match is independent of object key order and whitespace.
+	jobs, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, map[string]int{"a": 1, "b": 2}, false)
+	require.NoError(t, err)
+	assert.True(t, containsJobID(jobs, matchID), "exact payload match is returned")
+	assert.True(t, containsJobID(jobs, keyOrderID), "payload differing only in key order is returned (jsonb equality)")
+	assert.False(t, containsJobID(jobs, otherPayloadID), "a job with a different payload value is excluded")
+	assert.False(t, containsJobID(jobs, otherTypeID), "a job with the same payload but different type is excluded")
+	assert.False(t, containsJobID(jobs, stoppedID), "a stopped job is excluded when stopped=false")
+
+	// stopped=true: only the stopped job with the matching type and payload is returned.
+	stoppedJobs, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, map[string]int{"a": 1, "b": 2}, true)
+	require.NoError(t, err)
+	assert.True(t, containsJobID(stoppedJobs, stoppedID), "the stopped job is returned when stopped=true")
+	assert.False(t, containsJobID(stoppedJobs, matchID), "a to-do job is excluded when stopped=true")
+	assert.False(t, containsJobID(stoppedJobs, keyOrderID), "a to-do job is excluded when stopped=true")
+
+	// No matching payload returns an empty slice and no error.
+	none, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, map[string]int{"z": 9}, false)
+	require.NoError(t, err)
+	assert.Empty(t, none, "no matching payload returns an empty slice")
+}
+
+func TestHasJobWithTypeAndPayload(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const origin = "test-has-job-by-payload"
+	t.Cleanup(func() {
+		_ = db.Exec(context.Background(), `delete from worker.job where origin = $1`, origin)
+	})
+
+	const jobType = "test-has-job-by-payload-type"
+
+	insertWithPayload := func(id uu.ID, jt, payload string, stoppedAt any) {
+		t.Helper()
+		err := db.Exec(t.Context(),
+			/*sql*/ `
+				insert into worker.job (id, type, payload, priority, origin, max_retry_count, stopped_at)
+				values ($1, $2, $3::jsonb, 0, $4, 0, $5)
+			`,
+			id, jt, payload, origin, stoppedAt,
+		)
+		require.NoError(t, err)
+	}
+
+	todoID := uu.IDFrom("e1a60000-0000-4000-8000-000000000001")    // matching type and payload, to do
+	stoppedID := uu.IDFrom("e1a60000-0000-4000-8000-000000000002") // matching type and payload, but stopped
+
+	insertWithPayload(todoID, jobType, `{"a": 1, "b": 2}`, nil)
+	insertWithPayload(stoppedID, jobType, `{"x": 9}`, time.Now())
+
+	// The query payload is marshalled and compared as jsonb, so a match is
+	// independent of object key order and whitespace.
+	exists, err := jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, map[string]int{"b": 2, "a": 1}, false)
+	require.NoError(t, err)
+	assert.True(t, exists, "an unstopped job with the matching type and payload exists")
+
+	exists, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, map[string]int{"a": 1, "b": 2}, true)
+	require.NoError(t, err)
+	assert.False(t, exists, "no stopped job with that payload exists")
+
+	exists, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, map[string]int{"x": 9}, true)
+	require.NoError(t, err)
+	assert.True(t, exists, "the stopped job with the matching payload is found when stopped=true")
+
+	exists, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, map[string]int{"z": 0}, false)
+	require.NoError(t, err)
+	assert.False(t, exists, "no job with a non-matching payload exists")
+
+	// A job of another type with the payload doesn't count.
+	insertWithPayload(uu.IDFrom("e1a60000-0000-4000-8000-000000000004"), "test-has-job-by-payload-other-type", `{"only": "other"}`, nil)
+	exists, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, map[string]string{"only": "other"}, false)
+	require.NoError(t, err)
+	assert.False(t, exists, "a job with the payload but another type is not found")
+
+	// AddJob stores the payload sanitized, but the lookups match verbatim: a
+	// payload sanitizing would change fails with ErrInvalidPayload instead of
+	// collapsing onto another payload, and the job is found by its sanitized form.
+	unstorable := `{"name": "a` + jsonEscapedNul + `b"}`
+	job, err := jobqueue.NewJob(uu.IDFrom("e1a60000-0000-4000-8000-000000000003"), jobType, origin, unstorable, nullable.TimeNull)
+	require.NoError(t, err)
+	require.NoError(t, jobqueue.Add(t.Context(), job))
+
+	_, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, unstorable, false)
+	assert.ErrorIs(t, err, jobqueue.ErrInvalidPayload, "HasJobWithTypeAndPayload with an unstorable payload")
+	_, err = jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, unstorable, false)
+	assert.ErrorIs(t, err, jobqueue.ErrInvalidPayload, "GetJobsWithTypeAndPayload with an unstorable payload")
+
+	jobs, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, map[string]string{"name": "ab"}, false)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1, "the job is found by its sanitized payload")
+	assert.Equal(t, job.ID, jobs[0].ID)
+}
+
+// TestPayloadLookupsRejectInvalidPayload checks that the payload lookups fail
+// on a payload that can't identify a job instead of reporting no match: a
+// caller deduplicating jobs by payload would otherwise enqueue a duplicate.
+func TestPayloadLookupsRejectInvalidPayload(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const jobType = "test-payload-lookup-invalid-type"
+	for name, payload := range map[string]any{
+		"nil":         nil,
+		"nil pointer": (*struct{ A int })(nil),
+		"JSON null":   "null",
+		"empty":       "",
+		"invalid":     "{",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, payload, false)
+			assert.ErrorIs(t, err, jobqueue.ErrInvalidPayload, "GetJobsWithTypeAndPayload")
+
+			_, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, payload, false)
+			assert.ErrorIs(t, err, jobqueue.ErrInvalidPayload, "HasJobWithTypeAndPayload")
+		})
+	}
+}
+
+// TestPayloadLookupErrorsRedactPayload checks that the payload lookups keep the
+// payload out of their errors, which callers log: neither the rejection of an
+// unstorable payload nor a database error may quote it.
+func TestPayloadLookupErrorsRedactPayload(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const jobType = "test-payload-lookup-redact-type"
+	const marker = "redact-me-personal-data"
+	for name, payload := range map[string]string{
+		// Rejected before the query by marshalLookupPayload.
+		"unstorable": `{"secret": "` + marker + jsonEscapedNul + `"}`,
+		// Valid JSON that PostgreSQL rejects in the jsonb cast (numeric out of range).
+		"database error": `{"secret": "` + marker + `", "n": 1e1000000}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, payload, false)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), marker, "GetJobsWithTypeAndPayload error")
+
+			_, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, payload, false)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), marker, "HasJobWithTypeAndPayload error")
+		})
+	}
+}
+
+// TestAddJobErrorsRedactPayload checks that AddJob and AddJobBundle keep the
+// payload out of their errors, which callers log: neither the job passed as a
+// function parameter nor the insert's query text may quote it.
+func TestAddJobErrorsRedactPayload(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const origin = "test-add-job-redact"
+	t.Cleanup(func() {
+		bg := context.Background()
+		_ = db.Exec(bg, `delete from worker.job where origin = $1`, origin)
+		_ = db.Exec(bg, `delete from worker.job_bundle where origin = $1`, origin)
+	})
+
+	const marker = "redact-me-personal-data"
+	// Valid JSON that passes the Go-side checks but fails PostgreSQL's jsonb
+	// cast (numeric out of range), so the error comes from the insert.
+	payload := notnull.JSON(`{"secret": "` + marker + `", "n": 1e1000000}`)
+	newJob := func(id string) *jobqueue.Job {
+		return &jobqueue.Job{ID: uu.IDFrom(id), Type: "test-add-job-redact-type", Origin: origin, Payload: payload}
+	}
+
+	err := jobqueue.Add(t.Context(), newJob("e1a70000-0000-4000-8000-000000000001"))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), marker, "AddJob error")
+
+	bundle := &jobqueue.JobBundle{
+		ID:      uu.IDFrom("e1b70000-0000-4000-8000-000000000001"),
+		Type:    "test-add-job-redact-bundle",
+		Origin:  origin,
+		NumJobs: 1,
+		Jobs:    []*jobqueue.Job{newJob("e1a70000-0000-4000-8000-000000000002")},
+	}
+	err = jobqueue.AddBundle(t.Context(), bundle)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), marker, "AddJobBundle error")
 }
 
 func TestGetAllJobsWithErrors(t *testing.T) {

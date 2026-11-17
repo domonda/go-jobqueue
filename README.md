@@ -333,8 +333,11 @@ errorJobs, err := jobqueue.GetAllJobsWithErrors(ctx)
 // Reset a failed job to retry
 err = jobqueue.ResetJob(ctx, jobID)
 
-// Delete finished jobs
-err = jobqueue.DeleteFinishedJobs(ctx)
+// Check whether a job with this type and payload is already queued or running
+queued, err := jobqueue.HasJobWithTypeAndPayload(ctx, "send-email", payload, false)
+
+// Delete finished jobs (0 for all, or only those finished at least an hour ago)
+err = jobqueue.DeleteFinishedJobs(ctx, time.Hour)
 
 // Delete specific job
 err = jobqueue.DeleteJob(ctx, jobID)

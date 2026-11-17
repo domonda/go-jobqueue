@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"reflect"
 	"time"
 
 	"github.com/domonda/go-errs"
+	"github.com/domonda/go-pretty"
 	"github.com/domonda/go-sqldb/db"
 	"github.com/domonda/go-types/notnull"
 	"github.com/domonda/go-types/nullable"
@@ -33,13 +35,13 @@ type Job struct {
 	ID       uu.ID         `db:"id,primarykey" json:"id"`       // Unique identifier of the job (primary key)
 	BundleID uu.NullableID `db:"bundle_id"     json:"bundleId"` // ID of the JobBundle this job belongs to, or NULL for a standalone job
 
-	Type              string        `db:"type"     json:"type"`                           // CHECK(length("type") > 0 AND length("type") <= 100)
-	Payload           notnull.JSON  `db:"payload"  json:"payload"`                        // Job input data as JSON, passed to the registered worker
-	Priority          int64         `db:"priority" json:"priority"`                       // Higher priorities are started before lower ones
-	Origin            string        `db:"origin"   json:"origin"`                         // CHECK(length(origin) > 0 AND length(origin) <= 100)
-	MaxRetryCount     int           `db:"max_retry_count"   json:"maxRetryCount"`         // Maximum number of retries before the job is considered finally failed
-	CurrentRetryCount int           `db:"current_retry_count"   json:"currentRetryCount"` // Number of retries already attempted
-	StartAt           nullable.Time `db:"start_at" json:"startAt"`                        // If not NULL, earliest time to start the job
+	Type              string        `db:"type"                json:"type"`              // CHECK(length("type") > 0 AND length("type") <= 100)
+	Payload           notnull.JSON  `db:"payload"             json:"payload"`           // Job input data as JSON, passed to the registered worker
+	Priority          int64         `db:"priority"            json:"priority"`          // Higher priorities are started before lower ones
+	Origin            string        `db:"origin"              json:"origin"`            // CHECK(length(origin) > 0 AND length(origin) <= 100)
+	MaxRetryCount     int           `db:"max_retry_count"     json:"maxRetryCount"`     // Maximum number of retries before the job is considered finally failed
+	CurrentRetryCount int           `db:"current_retry_count" json:"currentRetryCount"` // Number of retries already attempted
+	StartAt           nullable.Time `db:"start_at"            json:"startAt"`           // If not NULL, earliest time to start the job
 
 	StartedAt     nullable.Time `db:"started_at"      json:"startedAt"`     // Time when started working on the job, or NULL when not started
 	WorkerAliveAt nullable.Time `db:"worker_alive_at" json:"workerAliveAt"` // Heartbeat updated periodically while a worker processes the job, NULL when not being processed. A stale value while StoppedAt is NULL indicates the worker crashed.
@@ -115,6 +117,37 @@ func (j *Job) HasError() bool {
 	return j.ErrorMsg.IsNotNull()
 }
 
+// PrettyPrint implements pretty.Printable, which errs.WrapWithFuncParams uses
+// to format the function parameters it adds to an error. It prints the job
+// like go-pretty prints any struct, but replaces the payload with its length:
+// a payload can be large or carry personal data, and errors get logged. This
+// covers every error that wraps a Job or a JobBundle holding it, such as those
+// of AddJob, AddJobBundle and the worker's DoJob.
+// Valid to call on a nil receiver.
+func (j *Job) PrettyPrint(w io.Writer) {
+	if j == nil {
+		_, _ = io.WriteString(w, "nil")
+		return
+	}
+	v := reflect.ValueOf(j).Elem()
+	_, _ = io.WriteString(w, "Job{")
+	for i := range v.NumField() {
+		if i > 0 {
+			_, _ = io.WriteString(w, ";")
+		}
+		field := v.Type().Field(i)
+		if !field.Anonymous {
+			_, _ = io.WriteString(w, field.Name+":")
+		}
+		if field.Name == "Payload" {
+			_, _ = fmt.Fprintf(w, "***REDACTED*** (%d bytes)", len(j.Payload))
+			continue
+		}
+		_, _ = pretty.Fprint(w, v.Field(i).Interface())
+	}
+	_, _ = io.WriteString(w, "}")
+}
+
 // String implements the fmt.Stringer interface.
 // Valid to call on a nil receiver.
 func (j *Job) String() string {
@@ -143,7 +176,7 @@ func NewJobWithPriority(
 	if jobType == "" {
 		return nil, errs.New("empty jobType")
 	}
-	payloadJSON, err := marshalPayload(payload)
+	payloadJSON, err := MarshalJobPayload(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -167,11 +200,16 @@ func NewJobWithPriority(
 	return job, nil
 }
 
-// marshalPayload returns the JSON text of a non-nil job payload. The JSON
+// MarshalJobPayload returns the JSON text of a non-nil job payload. The JSON
 // types, []byte and string, and pointers to the JSON types, are interpreted as
 // JSON text and validated with ValidatePayload. Everything else is marshalled
 // with encoding/json, which also validates and compacts the output of a
 // payload's own MarshalJSON method.
+//
+// It is the canonical conversion for a Job's Payload, used both when creating a
+// job and when matching jobs by payload in GetJobsWithTypeAndPayload and
+// HasJobWithTypeAndPayload, so that the stored and queried jsonb
+// representations are produced the same way.
 //
 // Every error matches ErrInvalidPayload and doesn't quote the payload, which can
 // be large or carry personal data, because callers log them. Errors of nil pointers
@@ -179,7 +217,10 @@ func NewJobWithPriority(
 // encoding/json's message, which may name a field or quote a single value such
 // as an invalid json.Number, and includes verbatim the error of any MarshalJSON
 // or MarshalText method it called, on the payload or on a value inside it.
-func marshalPayload(payload any) (notnull.JSON, error) {
+func MarshalJobPayload(payload any) (notnull.JSON, error) {
+	if payload == nil {
+		return nil, InvalidPayloadError("nil", nil)
+	}
 	// A nil pointer is a nil payload. Checking it first also lets the pointer
 	// cases below dereference without a nil check.
 	if v := reflect.ValueOf(payload); v.Kind() == reflect.Pointer && v.IsNil() {

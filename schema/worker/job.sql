@@ -54,6 +54,20 @@ create index worker_job_stopped_at_idx on worker.job(stopped_at);
 --     index streams in claim order instead of sorting the whole backlog.
 create index worker_job_claim_idx on worker.job("type", priority desc, created_at asc)
   where started_at is null;
+-- Partial hash index backing GetJobsWithTypeAndPayload and
+-- HasJobWithTypeAndPayload for jobs still to be processed, the duplicate check
+-- callers run before adding a job:
+--   where "type" = $1 and payload = $2 and stopped_at is null
+-- Without it a lookup filters every unstopped job through
+-- worker_job_stopped_at_idx (measured: 7 ms at 20k unstopped jobs, 0.02 ms with
+-- this index). Hash, not btree: a btree entry is limited to about 2.7 kB and a
+-- payload can be larger, which would fail the insert; a hash index stores only
+-- the value's hash and serves the jsonb equality. Partial on `stopped_at is
+-- null` keeps it to the pending and running jobs; stopped_at is already indexed,
+-- so the stop update loses no HOT optimization to it. Lookups of stopped jobs
+-- are rare and stay on worker_job_type_idx.
+create index worker_job_unstopped_payload_idx on worker.job using hash (payload)
+  where stopped_at is null;
 -- worker_alive_at is intentionally NOT indexed: the heartbeat rewrites it every
 -- HeartbeatInterval for each in-progress job, and indexing it would defeat
 -- Postgres HOT updates (an indexed column changing forces a new index entry
