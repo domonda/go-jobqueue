@@ -5,6 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-11-17
+
+The domonda dependencies move to their latest releases. The job queue's own
+code is unchanged, but importing v0.8.1 raises `go-errs` in your module from
+v1.0.4 to v1.3.1, which changes some error behavior you may rely on.
+
+### Changed
+
+- `github.com/domonda/go-errs` v1.3.1 (from v1.0.4). Errors created with
+  `errs.New`, `errs.Errorf`, `errs.WrapWithCallStack` and
+  `errs.WrapWithFuncParams` render their message once, on the first `Error()`
+  call, and return that text afterward. So a job error wrapped by the worker
+  shows the job as it was when the error was first printed. Two such errors
+  that are otherwise equal no longer compare equal with `reflect.DeepEqual` or
+  testify's `assert.Equal` when only one has been printed; compare `Error()`
+  strings or use `errors.Is`. `errs.AsErrorWithDebugStack` and
+  `errs.RecoverPanicAsError` return unexported error types; their messages and
+  `Unwrap` results are unchanged.
+
+- The `go-errs-wrap` tool now lives in its own module,
+  `github.com/domonda/go-errs/cmd/go-errs-wrap`. If your `go.mod` has a
+  `tool github.com/domonda/go-errs/cmd/go-errs-wrap` line from before go-errs
+  v1.1.0, `go tool go-errs-wrap` stops working after this upgrade. To restore
+  it, run `go get github.com/domonda/go-errs@latest`, then
+  `go get -tool github.com/domonda/go-errs/cmd/go-errs-wrap@latest`, then
+  `go mod tidy`.
+
+- `github.com/domonda/go-sqldb` and `github.com/domonda/go-sqldb/pqconn`
+  v1.4.1, `github.com/domonda/golog` v1.3.1, and the indirect
+  `DataDog/go-sqllexer`, `go.yaml.in/yaml/v3`, `golang.org/x/sys` and
+  `golang.org/x/term` dependencies move to their latest patch releases.
+
 ## [0.8.0] - 2026-10-18
 
 `go-types` moves to its tagged `v1.0.0-beta.2`, `golog` to v1.3.0, and building
