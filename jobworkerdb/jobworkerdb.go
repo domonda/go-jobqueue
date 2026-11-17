@@ -500,6 +500,29 @@ func (j *jobworkerDB) GetJob(ctx context.Context, jobID uu.ID) (job *jobqueue.Jo
 	)
 }
 
+// marshalLookupPayload converts the payload of a payload lookup to JSON with
+// jobqueue.MarshalJobPayload, the conversion AddJob's jobs are created with,
+// and rejects a payload that sanitizing would change.
+//
+// The lookup key is matched verbatim, never sanitized, for the reason given in
+// the String Sanitization section of the package documentation: sanitizing is
+// not injective, so a sanitized key such as {"tenant_id":"mine",
+// "tenant_id\u0000":"other"} could collapse onto another payload and match its
+// jobs. Matching the unsanitized key verbatim would fail the jsonb cast instead,
+// so such a payload returns an error matching jobqueue.ErrInvalidPayload. A job
+// whose payload was sanitized on write is found by its sanitized payload.
+func marshalLookupPayload(payload any) (notnull.JSON, error) {
+	payloadJSON, err := jobqueue.MarshalJobPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	// sanitizeJSON only removes bytes, so a changed payload is a shorter one.
+	if len(sanitizeJSON(payloadJSON)) != len(payloadJSON) {
+		return nil, jobqueue.InvalidPayloadError("contains characters PostgreSQL can't store", nil)
+	}
+	return payloadJSON, nil
+}
+
 func (j *jobworkerDB) GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (jobs []*jobqueue.Job, err error) {
 	defer errs.WrapWithFuncParams(&err, ctx, jobType, payload, stopped)
 
@@ -507,22 +530,17 @@ func (j *jobworkerDB) GetJobsWithTypeAndPayload(ctx context.Context, jobType str
 		return nil, jobqueue.ErrClosed
 	}
 
-	// Marshal and sanitize the payload with the same conversion AddJob applies
-	// before insertJob stores it, so the queried JSON is produced the same way as
-	// the stored payload: a payload with unstorable characters matches the job it
-	// created instead of failing the jsonb cast. Unlike the destructive
-	// origin-keyed deletes, a read-only lookup can safely use the sanitized key.
 	// The actual comparison is done by PostgreSQL's jsonb = jsonb operator, so the
 	// match is independent of object key order and insignificant whitespace.
-	payloadJSON, err := jobqueue.MarshalJobPayload(payload)
+	payloadJSON, err := marshalLookupPayload(payload)
 	if err != nil {
 		return nil, err
 	}
-	payloadJSON = sanitizeJSON(payloadJSON)
 
 	// stopped selects the lifecycle state: stopped jobs have a non-NULL stopped_at,
-	// jobs still to be processed have a NULL stopped_at. The $3::boolean cast lets a
-	// single statement cover both cases ((stopped_at is not null) = $3).
+	// jobs still to be processed have a NULL stopped_at. Comparing the predicate
+	// with the boolean parameter, (stopped_at is not null) = $3, lets a single
+	// statement cover both cases.
 	return db.QueryRowsAsSlice[*jobqueue.Job](ctx,
 		/*sql*/ `
 			select *
@@ -545,14 +563,13 @@ func (j *jobworkerDB) HasJobWithTypeAndPayload(ctx context.Context, jobType stri
 		return false, jobqueue.ErrClosed
 	}
 
-	// Same payload marshalling, sanitizing and jsonb comparison as
-	// GetJobsWithTypeAndPayload; this is the existence-only companion, so it runs
-	// a SELECT EXISTS and fetches no rows.
-	payloadJSON, err := jobqueue.MarshalJobPayload(payload)
+	// Same payload conversion and jsonb comparison as GetJobsWithTypeAndPayload;
+	// this is the existence-only companion, so it runs a SELECT EXISTS and
+	// fetches no rows.
+	payloadJSON, err := marshalLookupPayload(payload)
 	if err != nil {
 		return false, err
 	}
-	payloadJSON = sanitizeJSON(payloadJSON)
 
 	return db.QueryRowAs[bool](ctx,
 		/*sql*/ `
@@ -1191,7 +1208,12 @@ func (j *jobworkerDB) DeleteFinishedJobs(ctx context.Context, finishedFor time.D
 		return jobqueue.ErrClosed
 	}
 
-	if finishedFor <= 0 {
+	// A negative duration is a caller mistake, likely meant as "older than", and
+	// must not fall through to deleting every finished job.
+	if finishedFor < 0 {
+		return errs.New("negative finishedFor")
+	}
+	if finishedFor == 0 {
 		return db.Exec(ctx,
 			/*sql*/ `
 				delete from worker.job

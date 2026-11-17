@@ -268,21 +268,22 @@ func TestHasJobWithTypeAndPayload(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, exists, "a job with the payload but another type is not found")
 
-	// AddJob stores the payload sanitized, so the lookup sanitizes its payload
-	// the same way: the payload a job was added with finds that job instead of
-	// failing the jsonb cast on the \u0000 escape PostgreSQL can't store.
+	// AddJob stores the payload sanitized, but the lookups match verbatim: a
+	// payload sanitizing would change fails with ErrInvalidPayload instead of
+	// collapsing onto another payload, and the job is found by its sanitized form.
 	unstorable := `{"name": "a` + jsonEscapedNul + `b"}`
 	job, err := jobqueue.NewJob(uu.IDFrom("e1a60000-0000-4000-8000-000000000003"), jobType, origin, unstorable, nullable.TimeNull)
 	require.NoError(t, err)
 	require.NoError(t, jobqueue.Add(t.Context(), job))
 
-	exists, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, unstorable, false)
-	require.NoError(t, err)
-	assert.True(t, exists, "the job added with an unstorable payload is found by that payload")
+	_, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, unstorable, false)
+	assert.ErrorIs(t, err, jobqueue.ErrInvalidPayload, "HasJobWithTypeAndPayload with an unstorable payload")
+	_, err = jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, unstorable, false)
+	assert.ErrorIs(t, err, jobqueue.ErrInvalidPayload, "GetJobsWithTypeAndPayload with an unstorable payload")
 
-	jobs, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, unstorable, false)
+	jobs, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, map[string]string{"name": "ab"}, false)
 	require.NoError(t, err)
-	require.Len(t, jobs, 1)
+	require.Len(t, jobs, 1, "the job is found by its sanitized payload")
 	assert.Equal(t, job.ID, jobs[0].ID)
 }
 

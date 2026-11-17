@@ -94,19 +94,19 @@ Job passed to AddJob — the in-memory Job itself is not modified, except that a
 synchronous run sets its Payload to the sanitized payload while the worker runs
 and restores it afterwards.
 
-Sanitizing applies to values being WRITTEN, never to a key used to delete rows.
+Sanitizing applies to values being WRITTEN, never to a value used to look rows up.
 [jobworkerDB.DeleteJobsFromOrigin] and [jobworkerDB.DeleteJobBundlesFromOrigin]
 match their argument verbatim, so a job whose origin had to be sanitized on write
 is reachable by the sanitized string or by ID, but not by the original. Normalizing
 a destructive unbounded key would be worse: sanitizing is not injective, so it
 could collapse one origin onto another and delete jobs the caller never named.
 
-The read-only payload lookups [jobworkerDB.GetJobsWithTypeAndPayload] and
-[jobworkerDB.HasJobWithTypeAndPayload] are the exception: they sanitize their
-payload like AddJob does, so the payload a job was added with finds that job.
-Matching verbatim would make a payload with an unstorable \u0000 escape fail the
-jsonb cast instead. A lookup that matches a different original payload with the
-same sanitized form reports the job that is actually stored, and deletes nothing.
+The payload lookups [jobworkerDB.GetJobsWithTypeAndPayload] and
+[jobworkerDB.HasJobWithTypeAndPayload] match verbatim too, for the same reason:
+a sanitized lookup payload could collapse onto another payload and read its
+jobs. A lookup payload that sanitizing would change returns an error matching
+jobqueue.ErrInvalidPayload, so a job whose payload was sanitized on write is
+found by its sanitized payload or by ID.
 
 Three cases are not silently repaired, and fail the write instead. An origin
 consisting entirely of unstorable characters sanitizes to empty and violates the

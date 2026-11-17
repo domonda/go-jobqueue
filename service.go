@@ -70,7 +70,11 @@ type Service interface {
 	// order and insignificant whitespace. The stopped flag selects which jobs are
 	// returned: true for jobs that have stopped (finished, errored, or paused for a
 	// decision), false for jobs still to be processed. Returns an empty slice if
-	// none match.
+	// none match. A payload that can't be stored as a job payload, including one
+	// with characters PostgreSQL can't store, returns an error matching
+	// ErrInvalidPayload. No index covers the payload, so a lookup reads every job
+	// of jobType still in the queue; prune finished jobs with DeleteFinishedJobs
+	// to keep it cheap.
 	GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) ([]*Job, error)
 
 	// HasJobWithTypeAndPayload reports whether any job exists with the given type and
@@ -113,6 +117,7 @@ type Service interface {
 
 	// DeleteFinishedJobs deletes all successfully completed jobs without errors.
 	// If finishedFor is greater than zero, only jobs that have finished for at least the given duration are deleted.
+	// A negative finishedFor returns an error and deletes nothing.
 	DeleteFinishedJobs(ctx context.Context, finishedFor time.Duration) error
 
 	// Close closes the service and releases any resources.
@@ -148,7 +153,7 @@ func HasJobWithTypeAndPayload(ctx context.Context, jobType string, payload any, 
 // DeleteFinishedJobs deletes all successfully completed jobs without errors using
 // the service from the context or the default service. If finishedFor is greater
 // than zero, only jobs that have been finished for at least that duration are
-// deleted.
+// deleted. A negative finishedFor returns an error and deletes nothing.
 func DeleteFinishedJobs(ctx context.Context, finishedFor time.Duration) error {
 	return GetService(ctx).DeleteFinishedJobs(ctx, finishedFor)
 }

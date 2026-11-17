@@ -92,6 +92,11 @@ func TestDeleteFinishedJobsFinishedFor(t *testing.T) {
 	insertTestBundle(t, bundleID, "test-delete-finished-for-bundle", origin)
 	insertTestBundledJob(t, oldBundledID, bundleID, jobType, origin, now.Add(-2*time.Hour))
 
+	// A negative finishedFor is rejected instead of deleting every finished job.
+	require.Error(t, jobqueue.DeleteFinishedJobs(t.Context(), -time.Hour))
+	assert.Equal(t, 1, countJobByID(t, recentID), "a negative finishedFor deletes nothing")
+	assert.Equal(t, 1, countJobByID(t, oldID), "a negative finishedFor deletes nothing")
+
 	// Only delete jobs that have been finished for at least one hour.
 	require.NoError(t, jobqueue.DeleteFinishedJobs(t.Context(), time.Hour))
 
