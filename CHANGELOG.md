@@ -43,6 +43,13 @@ gains two methods, so callers and `Service` implementations need small changes.
   long ago by the database clock, so clock differences between servers don't
   matter. A negative `finishedFor` returns an error and deletes nothing.
 
+- Errors no longer quote job payloads, which can carry personal data and get
+  logged. An error that wraps a `Job` or a `JobBundle`, such as those of
+  `jobqueue.Add`, `jobqueue.AddBundle` and a failed worker, shows the payload as
+  `***REDACTED*** (N bytes)` while keeping the job's ID, type and other fields,
+  and a database error from inserting a job leaves the payload out of the query
+  it quotes. `Job` implements go-pretty's `Printable` for this.
+
 - **Breaking:** the `jobqueue.Service` interface has the two new methods
   `GetJobsWithTypeAndPayload` and `HasJobWithTypeAndPayload`. A custom `Service`
   implementation or mock must add them.

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"reflect"
 	"time"
 
 	"github.com/domonda/go-errs"
+	"github.com/domonda/go-pretty"
 	"github.com/domonda/go-sqldb/db"
 	"github.com/domonda/go-types/notnull"
 	"github.com/domonda/go-types/nullable"
@@ -113,6 +115,37 @@ func (j *Job) Succeeded() bool {
 // Valid to call on a nil receiver.
 func (j *Job) HasError() bool {
 	return j.ErrorMsg.IsNotNull()
+}
+
+// PrettyPrint implements pretty.Printable, which errs.WrapWithFuncParams uses
+// to format the function parameters it adds to an error. It prints the job
+// like go-pretty prints any struct, but replaces the payload with its length:
+// a payload can be large or carry personal data, and errors get logged. This
+// covers every error that wraps a Job or a JobBundle holding it, such as those
+// of AddJob, AddJobBundle and the worker's DoJob.
+// Valid to call on a nil receiver.
+func (j *Job) PrettyPrint(w io.Writer) {
+	if j == nil {
+		_, _ = io.WriteString(w, "nil")
+		return
+	}
+	v := reflect.ValueOf(j).Elem()
+	_, _ = io.WriteString(w, "Job{")
+	for i := range v.NumField() {
+		if i > 0 {
+			_, _ = io.WriteString(w, ";")
+		}
+		field := v.Type().Field(i)
+		if !field.Anonymous {
+			_, _ = io.WriteString(w, field.Name+":")
+		}
+		if field.Name == "Payload" {
+			_, _ = fmt.Fprintf(w, "***REDACTED*** (%d bytes)", len(j.Payload))
+			continue
+		}
+		_, _ = pretty.Fprint(w, v.Field(i).Interface())
+	}
+	_, _ = io.WriteString(w, "}")
 }
 
 // String implements the fmt.Stringer interface.

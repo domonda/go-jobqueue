@@ -259,3 +259,42 @@ func TestNewJobReflectType_NilPayload(t *testing.T) {
 	require.ErrorContains(t, err, "invalid job payload: nil")
 	assert.Nil(t, job)
 }
+
+// TestJobPrettyPrintRedactsPayload checks that an error wrapping a Job with
+// errs.WrapWithFuncParams, as AddJob, AddJobBundle and the worker's DoJob do,
+// identifies the job but doesn't quote its payload, which can carry personal
+// data and ends up in logs.
+func TestJobPrettyPrintRedactsPayload(t *testing.T) {
+	const marker = "redact-me-personal-data"
+	job := &jobqueue.Job{
+		ID:      uu.IDFrom("6f1c0000-0000-4000-8000-000000000001"),
+		Type:    "test-redact-type",
+		Origin:  "test-redact-origin",
+		Payload: notnull.JSON(`{"secret":"` + marker + `"}`),
+	}
+	bundle := &jobqueue.JobBundle{
+		ID:   uu.IDFrom("6f1c0000-0000-4000-8000-000000000002"),
+		Type: "test-redact-bundle",
+		Jobs: []*jobqueue.Job{job},
+	}
+
+	for name, param := range map[string]any{"job": job, "bundle": bundle} {
+		t.Run(name, func(t *testing.T) {
+			err := func() (err error) {
+				defer errs.WrapWithFuncParams(&err, param)
+				return errs.New("boom")
+			}()
+			msg := err.Error()
+			assert.NotContains(t, msg, marker, "payload must not be quoted")
+			assert.Contains(t, msg, job.ID.String(), "the job stays identifiable")
+			assert.Contains(t, msg, job.Type)
+		})
+	}
+
+	var nilJob *jobqueue.Job
+	err := func() (err error) {
+		defer errs.WrapWithFuncParams(&err, nilJob)
+		return errs.New("boom")
+	}()
+	assert.Contains(t, err.Error(), "nil", "a nil job prints as nil")
+}

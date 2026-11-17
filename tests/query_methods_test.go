@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/domonda/go-sqldb/db"
+	"github.com/domonda/go-types/notnull"
 	"github.com/domonda/go-types/nullable"
 	"github.com/domonda/go-types/uu"
 
@@ -339,6 +340,45 @@ func TestPayloadLookupErrorsRedactPayload(t *testing.T) {
 			assert.NotContains(t, err.Error(), marker, "HasJobWithTypeAndPayload error")
 		})
 	}
+}
+
+// TestAddJobErrorsRedactPayload checks that AddJob and AddJobBundle keep the
+// payload out of their errors, which callers log: neither the job passed as a
+// function parameter nor the insert's query text may quote it.
+func TestAddJobErrorsRedactPayload(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const origin = "test-add-job-redact"
+	t.Cleanup(func() {
+		bg := context.Background()
+		_ = db.Exec(bg, `delete from worker.job where origin = $1`, origin)
+		_ = db.Exec(bg, `delete from worker.job_bundle where origin = $1`, origin)
+	})
+
+	const marker = "redact-me-personal-data"
+	// Valid JSON that passes the Go-side checks but fails PostgreSQL's jsonb
+	// cast (numeric out of range), so the error comes from the insert.
+	payload := notnull.JSON(`{"secret": "` + marker + `", "n": 1e1000000}`)
+	newJob := func(id string) *jobqueue.Job {
+		return &jobqueue.Job{ID: uu.IDFrom(id), Type: "test-add-job-redact-type", Origin: origin, Payload: payload}
+	}
+
+	err := jobqueue.Add(t.Context(), newJob("e1a70000-0000-4000-8000-000000000001"))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), marker, "AddJob error")
+
+	bundle := &jobqueue.JobBundle{
+		ID:      uu.IDFrom("e1b70000-0000-4000-8000-000000000001"),
+		Type:    "test-add-job-redact-bundle",
+		Origin:  origin,
+		NumJobs: 1,
+		Jobs:    []*jobqueue.Job{newJob("e1a70000-0000-4000-8000-000000000002")},
+	}
+	err = jobqueue.AddBundle(t.Context(), bundle)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), marker, "AddJobBundle error")
 }
 
 func TestGetAllJobsWithErrors(t *testing.T) {

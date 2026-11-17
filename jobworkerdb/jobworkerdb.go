@@ -179,7 +179,7 @@ func doJobWithPayload(ctx context.Context, job *jobqueue.Job, payload notnull.JS
 // An origin whose every character is unstorable sanitizes to "" and fails the
 // insert with check(length(origin) > 0).
 func insertJob(ctx context.Context, job *jobqueue.Job, payload notnull.JSON) (err error) {
-	// payload is not passed: job already holds it, so it would be quoted twice.
+	// payload is not passed: job holds it, and Job.PrettyPrint redacts it there.
 	defer errs.WrapWithFuncParams(&err, ctx, job)
 
 	logSanitized(ctx, "jobID", job.ID, "payload", len(job.Payload), len(payload))
@@ -208,14 +208,14 @@ func insertJob(ctx context.Context, job *jobqueue.Job, payload notnull.JSON) (er
 				$8
 			)
 		`,
-		job.ID,            // $1
-		job.BundleID,      // $2
-		job.Type,          // $3
-		payload,           // $4
-		job.Priority,      // $5
-		origin,            // $6
-		job.MaxRetryCount, // $7
-		job.StartAt,       // $8
+		job.ID,                    // $1
+		job.BundleID,              // $2
+		job.Type,                  // $3
+		sqldb.KeepSecret(payload), // $4: redacted from the query in database errors
+		job.Priority,              // $5
+		origin,                    // $6
+		job.MaxRetryCount,         // $7
+		job.StartAt,               // $8
 	)
 }
 

@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/domonda/go-errs v1.3.1
+	github.com/domonda/go-pretty v1.0.0
 	github.com/domonda/go-sqldb v1.4.1
 	github.com/domonda/go-sqldb/pqconn v1.4.1
 	github.com/domonda/go-types v1.0.0-beta.2
@@ -18,7 +19,6 @@ require (
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/corazawaf/libinjection-go v0.3.5 // indirect
 	github.com/domonda/go-encjson v1.0.0 // indirect
-	github.com/domonda/go-pretty v1.0.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/lib/pq v1.12.3 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
