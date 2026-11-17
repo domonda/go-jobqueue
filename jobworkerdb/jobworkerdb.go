@@ -524,7 +524,9 @@ func marshalLookupPayload(payload any) (notnull.JSON, error) {
 }
 
 func (j *jobworkerDB) GetJobsWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (jobs []*jobqueue.Job, err error) {
-	defer errs.WrapWithFuncParams(&err, ctx, jobType, payload, stopped)
+	// The payload can carry personal data and errors get logged, so it is
+	// redacted from the error call stack and from the query in database errors.
+	defer errs.WrapWithFuncParams(&err, ctx, jobType, errs.KeepSecret(payload), stopped)
 
 	if j.closed.Load() {
 		return nil, jobqueue.ErrClosed
@@ -550,14 +552,16 @@ func (j *jobworkerDB) GetJobsWithTypeAndPayload(ctx context.Context, jobType str
 				and (stopped_at is not null) = $3
 			order by created_at
 		`,
-		jobType,     // $1
-		payloadJSON, // $2
-		stopped,     // $3
+		jobType,                       // $1
+		sqldb.KeepSecret(payloadJSON), // $2
+		stopped,                       // $3
 	)
 }
 
 func (j *jobworkerDB) HasJobWithTypeAndPayload(ctx context.Context, jobType string, payload any, stopped bool) (exists bool, err error) {
-	defer errs.WrapWithFuncParams(&err, ctx, jobType, payload, stopped)
+	// The payload can carry personal data and errors get logged, so it is
+	// redacted from the error call stack and from the query in database errors.
+	defer errs.WrapWithFuncParams(&err, ctx, jobType, errs.KeepSecret(payload), stopped)
 
 	if j.closed.Load() {
 		return false, jobqueue.ErrClosed
@@ -581,9 +585,9 @@ func (j *jobworkerDB) HasJobWithTypeAndPayload(ctx context.Context, jobType stri
 					and (stopped_at is not null) = $3
 			)
 		`,
-		jobType,     // $1
-		payloadJSON, // $2
-		stopped,     // $3
+		jobType,                       // $1
+		sqldb.KeepSecret(payloadJSON), // $2
+		stopped,                       // $3
 	)
 }
 

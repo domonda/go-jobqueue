@@ -313,6 +313,34 @@ func TestPayloadLookupsRejectInvalidPayload(t *testing.T) {
 	}
 }
 
+// TestPayloadLookupErrorsRedactPayload checks that the payload lookups keep the
+// payload out of their errors, which callers log: neither the rejection of an
+// unstorable payload nor a database error may quote it.
+func TestPayloadLookupErrorsRedactPayload(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const jobType = "test-payload-lookup-redact-type"
+	const marker = "redact-me-personal-data"
+	for name, payload := range map[string]string{
+		// Rejected before the query by marshalLookupPayload.
+		"unstorable": `{"secret": "` + marker + jsonEscapedNul + `"}`,
+		// Valid JSON that PostgreSQL rejects in the jsonb cast (numeric out of range).
+		"database error": `{"secret": "` + marker + `", "n": 1e1000000}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, payload, false)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), marker, "GetJobsWithTypeAndPayload error")
+
+			_, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, payload, false)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), marker, "HasJobWithTypeAndPayload error")
+		})
+	}
+}
+
 func TestGetAllJobsWithErrors(t *testing.T) {
 	_ = jobqueue.Close()
 	setupDBConn(t)
