@@ -262,6 +262,12 @@ func TestHasJobWithTypeAndPayload(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, exists, "no job with a non-matching payload exists")
 
+	// A job of another type with the payload doesn't count.
+	insertWithPayload(uu.IDFrom("e1a60000-0000-4000-8000-000000000004"), "test-has-job-by-payload-other-type", `{"only": "other"}`, nil)
+	exists, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, map[string]string{"only": "other"}, false)
+	require.NoError(t, err)
+	assert.False(t, exists, "a job with the payload but another type is not found")
+
 	// AddJob stores the payload sanitized, so the lookup sanitizes its payload
 	// the same way: the payload a job was added with finds that job instead of
 	// failing the jsonb cast on the \u0000 escape PostgreSQL can't store.
@@ -278,6 +284,32 @@ func TestHasJobWithTypeAndPayload(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.Equal(t, job.ID, jobs[0].ID)
+}
+
+// TestPayloadLookupsRejectInvalidPayload checks that the payload lookups fail
+// on a payload that can't identify a job instead of reporting no match: a
+// caller deduplicating jobs by payload would otherwise enqueue a duplicate.
+func TestPayloadLookupsRejectInvalidPayload(t *testing.T) {
+	_ = jobqueue.Close()
+	setupDBConn(t)
+	t.Cleanup(func() { _ = jobqueue.Close() })
+
+	const jobType = "test-payload-lookup-invalid-type"
+	for name, payload := range map[string]any{
+		"nil":         nil,
+		"nil pointer": (*struct{ A int })(nil),
+		"JSON null":   "null",
+		"empty":       "",
+		"invalid":     "{",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := jobqueue.GetJobsWithTypeAndPayload(t.Context(), jobType, payload, false)
+			assert.ErrorIs(t, err, jobqueue.ErrInvalidPayload, "GetJobsWithTypeAndPayload")
+
+			_, err = jobqueue.HasJobWithTypeAndPayload(t.Context(), jobType, payload, false)
+			assert.ErrorIs(t, err, jobqueue.ErrInvalidPayload, "HasJobWithTypeAndPayload")
+		})
+	}
 }
 
 func TestGetAllJobsWithErrors(t *testing.T) {
