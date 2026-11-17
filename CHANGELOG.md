@@ -5,6 +5,48 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-11-17
+
+You can now ask the queue whether a job with a given type and payload exists,
+or fetch those jobs, and delete only jobs that finished at least a given time
+ago. Code that queried `worker.job` with its own SQL for these can switch to the
+`jobqueue` API. `DeleteFinishedJobs` takes a new argument and `jobqueue.Service`
+gains two methods, so callers and `Service` implementations need small changes.
+
+### Added
+
+- `jobqueue.GetJobsWithTypeAndPayload(ctx, jobType, payload, stopped)` returns
+  the jobs of `jobType` whose payload equals `payload`, and
+  `jobqueue.HasJobWithTypeAndPayload` reports whether one exists without loading
+  it. Payloads are compared as PostgreSQL `jsonb`, so key order and whitespace
+  don't matter. `stopped` selects stopped jobs (finished, failed or paused for a
+  decision) or jobs still to be processed. Use `Has…(ctx, typ, payload, false)`
+  to check whether a job is already queued or running; the check and a following
+  `Add` are not atomic.
+
+- A lookup payload that can't be a job payload (nil, empty, invalid JSON or
+  `null`), or that contains characters PostgreSQL can't store such as a `\u0000`
+  escape, returns an error matching `jobqueue.ErrInvalidPayload`. The payload is
+  compared exactly as given, so a job whose payload had such characters removed
+  on write is found by its stored form. Lookup errors don't quote the payload,
+  apart from what a marshalling error names (see `MarshalJobPayload`).
+
+- `jobqueue.MarshalJobPayload(payload)` exposes the conversion `NewJob` applies
+  to a payload, for code that needs the JSON a job would store.
+
+### Changed
+
+- **Breaking:** `DeleteFinishedJobs(ctx)` is now
+  `DeleteFinishedJobs(ctx, finishedFor time.Duration)`. Pass `0` for the old
+  behavior of deleting every finished job without errors that isn't part of a
+  bundle. A positive `finishedFor` deletes only jobs that finished at least that
+  long ago by the database clock, so clock differences between servers don't
+  matter. A negative `finishedFor` returns an error and deletes nothing.
+
+- **Breaking:** the `jobqueue.Service` interface has the two new methods
+  `GetJobsWithTypeAndPayload` and `HasJobWithTypeAndPayload`. A custom `Service`
+  implementation or mock must add them.
+
 ## [0.8.1] - 2026-11-17
 
 The domonda dependencies move to their latest releases. The job queue's own
